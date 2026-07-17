@@ -330,6 +330,22 @@ def _auto_variants(designation: str) -> list[str]:
     return list(dict.fromkeys(variants))  # убираем дубли
 
 
+# ─── Время Казахстана (UTC+5, единое с 2024 г., без перехода на летнее) ───────
+from datetime import timezone, timedelta
+
+KZ_TZ = timezone(timedelta(hours=5), "Алматы")
+
+
+def kz_now() -> datetime:
+    """Текущие дата и время Казахстана (Алматы, UTC+5)."""
+    return datetime.now(KZ_TZ)
+
+
+def kz_today() -> date:
+    """Сегодняшняя дата по казахстанскому времени."""
+    return kz_now().date()
+
+
 def calc_contestation(reg_date_val):
     """5-летний срок оспаривания ТЗ с даты регистрации (ст. 28 Закона о ТЗ РК)."""
     if not reg_date_val:
@@ -351,7 +367,7 @@ def calc_contestation(reg_date_val):
                 return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
 
         deadline = date(reg_date.year + 5, reg_date.month, reg_date.day)
-        today = date.today()
+        today = kz_today()
         days_left = (deadline - today).days
 
         if days_left < 0:
@@ -875,6 +891,7 @@ with st.sidebar:
         "📰 Бюллетень Kazpatent",
         "⚖️ Мониторинг законодательства",
         "📚 Правовая база",
+        "📅 Календарь",
         "📝 Отчёты",
         "📖 Журнал проверок",
         "⚙️ Настройки",
@@ -3210,6 +3227,196 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
                 conn.execute("DELETE FROM search_runs")
                 conn.commit()
             st.success("Журнал проверок очищен.")
+
+
+# ─── КАЛЕНДАРЬ ────────────────────────────────────────────────────────────────
+
+elif page == "📅 Календарь":
+    import calendar as _calmod
+
+    _RU_MONTHS = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    _RU_MONTHS_NOM = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                      "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    _RU_WD_FULL = ["понедельник", "вторник", "среда", "четверг",
+                   "пятница", "суббота", "воскресенье"]
+    _RU_WD_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+    st.markdown("""
+    <div style="margin-bottom:8px;">
+        <div style="font-size:22px;font-weight:700;color:#0F172A;">Календарь</div>
+        <div style="font-size:13px;color:#64748B;margin-top:3px;">
+            Реальное время Казахстана (Алматы, UTC+5) и сроки по товарным знакам
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Живые часы Казахстана (обновляются раз в секунду) ─────────────────────
+    @st.fragment(run_every="1s")
+    def _kz_live_clock():
+        now = kz_now()
+        wd = _RU_WD_FULL[now.weekday()].capitalize()
+        st.markdown(f"""
+        <div style="display:flex;align-items:center;gap:18px;
+                    background:linear-gradient(135deg,#1E3A8A 0%,#2563EB 100%);
+                    border-radius:14px;padding:18px 24px;margin-bottom:18px;color:#fff;">
+            <div style="font-size:40px;line-height:1;">🕐</div>
+            <div>
+                <div style="font-size:34px;font-weight:800;letter-spacing:1px;
+                            font-variant-numeric:tabular-nums;">{now:%H:%M:%S}</div>
+                <div style="font-size:14px;opacity:.9;margin-top:2px;">
+                    {wd}, {now.day} {_RU_MONTHS[now.month]} {now.year} г. · Алматы (UTC+5)
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    _kz_live_clock()
+
+    # ── Навигация по месяцам ──────────────────────────────────────────────────
+    _today = kz_today()
+    if "cal_year" not in st.session_state:
+        st.session_state.cal_year = _today.year
+        st.session_state.cal_month = _today.month
+
+    nav_prev, nav_title, nav_next, nav_today = st.columns([1, 3, 1, 1.4])
+    with nav_prev:
+        if st.button("◀", use_container_width=True, key="cal_prev"):
+            m = st.session_state.cal_month - 1
+            st.session_state.cal_year += (m == 0) and -1 or 0
+            st.session_state.cal_month = 12 if m == 0 else m
+            st.rerun()
+    with nav_next:
+        if st.button("▶", use_container_width=True, key="cal_next"):
+            m = st.session_state.cal_month + 1
+            st.session_state.cal_year += (m == 13) and 1 or 0
+            st.session_state.cal_month = 1 if m == 13 else m
+            st.rerun()
+    with nav_today:
+        if st.button("Сегодня", use_container_width=True, key="cal_today"):
+            st.session_state.cal_year = _today.year
+            st.session_state.cal_month = _today.month
+            st.rerun()
+    cy, cm = st.session_state.cal_year, st.session_state.cal_month
+    with nav_title:
+        st.markdown(
+            f"<div style='text-align:center;font-size:20px;font-weight:700;"
+            f"color:#1E3A8A;padding-top:4px;'>{_RU_MONTHS_NOM[cm]} {cy}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Сроки оспаривания (рег. дата + 5 лет) из найденных знаков ─────────────
+    _deadlines = {}  # date -> list[{name, status}]
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT designation, registration_number, registration_date "
+            "FROM found_marks WHERE registration_date IS NOT NULL "
+            "AND registration_date != ''"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            ct = calc_contestation(r["registration_date"])
+            if ct.get("deadline"):
+                try:
+                    dd = datetime.strptime(ct["deadline"], "%d.%m.%Y").date()
+                except ValueError:
+                    continue
+                _deadlines.setdefault(dd, []).append({
+                    "name": r["designation"], "status": ct["status"],
+                    "num": r["registration_number"] or "",
+                })
+    except Exception as e:
+        st.caption(f"Сроки временно недоступны: {e}")
+
+    _STATUS_COLOR = {"urgent": "#DC2626", "open": "#16A34A", "expired": "#94A3B8"}
+
+    # ── Сетка месяца ──────────────────────────────────────────────────────────
+    weeks = _calmod.monthcalendar(cy, cm)
+    cells = ""
+    for week in weeks:
+        cells += "<tr>"
+        for wd_i, day in enumerate(week):
+            if day == 0:
+                cells += "<td style='height:74px;'></td>"
+                continue
+            cur = date(cy, cm, day)
+            is_today = (cur == _today)
+            is_weekend = wd_i >= 5
+            marks = _deadlines.get(cur, [])
+            bg = "#EFF6FF" if is_today else ("#FafafA" if is_weekend else "#fff")
+            border = "2px solid #2563EB" if is_today else "1px solid #E2E8F0"
+            num_color = "#1E3A8A" if is_today else ("#94A3B8" if is_weekend else "#334155")
+            dots = ""
+            if marks:
+                seen = []
+                for mk in marks:
+                    c = _STATUS_COLOR.get(mk["status"], "#94A3B8")
+                    if c not in seen:
+                        seen.append(c)
+                dots = "".join(
+                    f"<span style='display:inline-block;width:7px;height:7px;"
+                    f"border-radius:50%;background:{c};margin:0 1px;'></span>" for c in seen
+                )
+                title = "; ".join(f"{m['name']} №{m['num']}" for m in marks)
+            else:
+                title = ""
+            badge = (f"<div style='font-size:9px;color:#DC2626;font-weight:700;"
+                     f"margin-top:1px;'>{len(marks)} срок(а)</div>" if marks else "")
+            cells += (
+                f"<td title='{title}' style='height:74px;vertical-align:top;"
+                f"background:{bg};border:{border};border-radius:8px;padding:5px 6px;'>"
+                f"<div style='font-size:14px;font-weight:{700 if is_today else 500};"
+                f"color:{num_color};'>{day}</div>"
+                f"<div style='margin-top:3px;'>{dots}</div>{badge}</td>"
+            )
+        cells += "</tr>"
+
+    header_cells = "".join(
+        f"<th style='padding:6px 0;font-size:12px;font-weight:700;"
+        f"color:{'#DC2626' if i>=5 else '#64748B'};'>{wd}</th>"
+        for i, wd in enumerate(_RU_WD_SHORT)
+    )
+    st.markdown(
+        f"<table style='width:100%;border-collapse:separate;border-spacing:4px;"
+        f"table-layout:fixed;'><thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{cells}</tbody></table>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Легенда ───────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#64748B;">
+        <span>🔵 сегодня</span>
+        <span><span style="color:#DC2626;">●</span> срок ≤ 6 мес. (срочно)</span>
+        <span><span style="color:#16A34A;">●</span> срок открыт</span>
+        <span><span style="color:#94A3B8;">●</span> срок истёк</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Ближайшие сроки (90 дней) ─────────────────────────────────────────────
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown("#### ⏳ Ближайшие сроки оспаривания (90 дней)")
+    upcoming = sorted(
+        (d, items) for d, items in _deadlines.items()
+        if 0 <= (d - _today).days <= 90
+    )
+    if not upcoming:
+        st.info("В ближайшие 90 дней сроков оспаривания нет.")
+    else:
+        for d, items in upcoming:
+            left = (d - _today).days
+            for it in items:
+                clr = _STATUS_COLOR.get(it["status"], "#94A3B8")
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:10px;"
+                    f"padding:8px 12px;border-left:3px solid {clr};background:#F8FAFC;"
+                    f"border-radius:6px;margin-bottom:6px;'>"
+                    f"<span style='font-weight:700;color:#1E3A8A;'>{d:%d.%m.%Y}</span>"
+                    f"<span style='color:#64748B;'>· осталось {left} дн. ·</span>"
+                    f"<span>{it['name']} №{it['num']}</span></div>",
+                    unsafe_allow_html=True,
+                )
 
 
 # ─── ПОЛЬЗОВАТЕЛИ (только админ) ──────────────────────────────────────────────
