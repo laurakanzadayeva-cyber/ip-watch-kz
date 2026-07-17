@@ -12,6 +12,7 @@ import json
 import logging
 import random
 import re
+import secrets
 import smtplib
 import ssl
 import time
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 _CONFIG_DIR = Path(__file__).parent.parent / "config"
 _USERS_FILE = _CONFIG_DIR / "users.yaml"
 _PENDING_FILE = _CONFIG_DIR / "pending.json"
+_SESSIONS_FILE = _CONFIG_DIR / "sessions.json"
+
+REMEMBER_DAYS = 30  # срок действия cookie «Запомнить меня»
 
 CODE_TTL_SECONDS = 15 * 60  # код действует 15 минут
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -279,3 +283,59 @@ def resend_code(email: str) -> dict:
         return {"ok": True, "error": "", "dev_code": None}
     except Exception as e:
         return {"ok": False, "error": f"Не удалось отправить письмо: {e}"}
+
+
+# ─── Постоянные сессии («Запомнить меня») ────────────────────────────────────
+
+def _load_sessions() -> dict:
+    if _SESSIONS_FILE.exists():
+        try:
+            with open(_SESSIONS_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_sessions(data: dict) -> None:
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_SESSIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def create_session(email: str, days: int = REMEMBER_DAYS) -> str:
+    """Создаёт токен долгой сессии, возвращает его (для записи в cookie)."""
+    email = (email or "").strip().lower()
+    token = secrets.token_urlsafe(32)
+    sessions = {t: v for t, v in _load_sessions().items() if v.get("expires", 0) > time.time()}
+    sessions[token] = {"email": email, "expires": time.time() + days * 86400}
+    _save_sessions(sessions)
+    return token
+
+
+def get_session_user(token: str):
+    """По токену cookie возвращает user_dict (с 'username') либо None."""
+    if not token:
+        return None
+    sessions = _load_sessions()
+    entry = sessions.get(token)
+    if not entry or entry.get("expires", 0) <= time.time():
+        if token in sessions:
+            del sessions[token]
+            _save_sessions(sessions)
+        return None
+    cfg = load_users()
+    key, user = _find_user_by_email(cfg, entry["email"])
+    if not user:
+        return None
+    return {**user, "username": key}
+
+
+def destroy_session(token: str) -> None:
+    """Удаляет токен сессии (при выходе)."""
+    if not token:
+        return
+    sessions = _load_sessions()
+    if token in sessions:
+        del sessions[token]
+        _save_sessions(sessions)

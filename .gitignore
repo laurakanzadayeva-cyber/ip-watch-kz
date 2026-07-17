@@ -2,6 +2,7 @@
 config/credentials.json
 config/users.yaml
 config/pending.json
+config/sessions.json
 
 # Данные и кэш
 data/
