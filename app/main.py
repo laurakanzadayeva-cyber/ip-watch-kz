@@ -82,13 +82,31 @@ if _auth_cfg:
 
     elif _auth_status is None:
         st.markdown("""
-        <div style="text-align:center;margin-top:60px;">
-            <div style="font-size:48px;">🛡️</div>
-            <h2 style="color:#2563EB;">IP Watch KZ</h2>
-            <p style="color:#6B7280;">Система мониторинга товарных знаков — Serge Group</p>
+        <div style="display:flex;flex-direction:column;align-items:center;
+                    justify-content:center;min-height:80vh;gap:0;">
+            <!-- Логотип SERGEK GROUP -->
+            <div style="margin-bottom:32px;text-align:center;">
+                <div style="font-size:36px;font-weight:900;color:#1B2A4A;
+                            letter-spacing:3px;font-family:'Segoe UI',Arial,sans-serif;
+                            line-height:1;text-transform:uppercase;">SERGEK</div>
+                <div style="font-size:20px;font-weight:700;color:#2563EB;
+                            letter-spacing:5px;font-family:'Segoe UI',Arial,sans-serif;
+                            text-transform:uppercase;margin-top:2px;">GROUP</div>
+                <div style="width:100%;height:2px;background:linear-gradient(90deg,#2563EB,#93C5FD);
+                            border-radius:2px;margin-top:8px;"></div>
+            </div>
+            <!-- Бейдж системы -->
+            <div style="background:#F0F7FF;border:1px solid #BFDBFE;border-radius:12px;
+                        padding:14px 28px;text-align:center;margin-bottom:28px;">
+                <div style="font-size:22px;font-weight:700;color:#1E3A8A;letter-spacing:-0.3px;">
+                    ⚖️ IP Watch KZ
+                </div>
+                <div style="font-size:13px;color:#64748B;margin-top:4px;">
+                    Система мониторинга товарных знаков
+                </div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
-        st.info("Введите логин и пароль для входа в систему.")
         st.stop()
 
     # Кнопка выхода рендерится внизу сайдбара — см. основной sidebar-блок ниже
@@ -603,18 +621,28 @@ div[data-testid="stButton"] > button[kind="secondary"] {
 
 with st.sidebar:
     st.markdown("""
-    <div style="padding:20px 16px 16px;border-bottom:1px solid rgba(255,255,255,0.07);">
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;
-                    color:rgba(255,255,255,0.3);text-transform:uppercase;margin-bottom:10px;">
-            Serge Group
+    <div style="padding:18px 16px 14px;border-bottom:1px solid rgba(255,255,255,0.07);">
+        <!-- Логотип SERGEK GROUP на тёмном фоне -->
+        <div style="margin-bottom:14px;">
+            <div style="font-size:20px;font-weight:900;color:#FFFFFF;
+                        letter-spacing:2.5px;font-family:'Segoe UI',Arial,sans-serif;
+                        text-transform:uppercase;line-height:1;">SERGEK</div>
+            <div style="font-size:11px;font-weight:700;color:#60A5FA;
+                        letter-spacing:4px;font-family:'Segoe UI',Arial,sans-serif;
+                        text-transform:uppercase;margin-top:1px;">GROUP</div>
+            <div style="width:40px;height:2px;background:#3B82F6;
+                        border-radius:1px;margin-top:5px;"></div>
         </div>
+        <!-- Бейдж системы -->
         <div style="display:flex;align-items:center;gap:9px;
-                    background:rgba(59,130,246,0.2);border:1px solid rgba(59,130,246,0.3);
-                    border-radius:8px;padding:9px 11px;">
-            <span style="font-size:17px;">⚖️</span>
+                    background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.25);
+                    border-radius:8px;padding:8px 10px;">
+            <span style="font-size:15px;">⚖️</span>
             <div>
-                <div style="font-size:14px;font-weight:700;color:#BFDBFE;line-height:1.1;">IP Watch KZ</div>
-                <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">Мониторинг товарных знаков</div>
+                <div style="font-size:12px;font-weight:700;color:#BFDBFE;line-height:1.2;">IP Watch KZ</div>
+                <div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:1px;">
+                    Мониторинг товарных знаков
+                </div>
             </div>
         </div>
     </div>
