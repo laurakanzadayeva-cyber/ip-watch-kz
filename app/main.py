@@ -1145,19 +1145,6 @@ if page == "🏠 Главная":
 
     _first_name = (_auth_name or "").strip().split()[0] if (_auth_name or "").strip() else ""
     _greet_name = f", {_first_name}" if _first_name else ""
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,#EFF6FF 0%,#F0F7FF 100%);
-                border:1px solid #BFDBFE;border-radius:14px;
-                padding:18px 22px;margin:6px 0 18px;">
-        <div style="font-size:19px;font-weight:700;color:#1E3A8A;">
-            Добро пожаловать{_greet_name}! 👋
-        </div>
-        <div style="font-size:13.5px;color:#475569;margin-top:6px;line-height:1.5;">
-            Управляйте профилями мониторинга, отслеживайте новые совпадения
-            и анализируйте результаты проверок. Желаем продуктивной работы!
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
 
     conn = get_connection()
     _own = _owner_scope()
@@ -1214,11 +1201,27 @@ if page == "🏠 Главная":
     else:
         need_check = True
 
-    col_title, col_btn = st.columns([2.4, 1])
-    with col_title:
+    # ── Верх: слева приветствие + проверка, справа компактный календарь ──
+    _top_l, _top_r = st.columns([3.1, 1], gap="medium")
+    with _top_r:
+        render_mini_calendar()
+    with _top_l:
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#EFF6FF 0%,#F0F7FF 100%);
+                    border:1px solid #BFDBFE;border-radius:14px;
+                    padding:16px 20px;margin:0 0 12px;">
+            <div style="font-size:19px;font-weight:700;color:#1E3A8A;">
+                Добро пожаловать{_greet_name}! 👋
+            </div>
+            <div style="font-size:13.5px;color:#475569;margin-top:6px;line-height:1.5;">
+                Управляйте профилями мониторинга, отслеживайте новые совпадения
+                и анализируйте результаты проверок. Желаем продуктивной работы!
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         if last_run_str:
             st.markdown(
-                f'<div style="font-size:13px;color:#64748B;padding-top:8px;">'
+                f'<div style="font-size:13px;color:#64748B;margin-bottom:8px;">'
                 f'<span style="display:inline-block;width:7px;height:7px;background:#10B981;'
                 f'border-radius:50%;margin-right:6px;vertical-align:middle;"></span>'
                 f'Последняя проверка: {last_run_str}</div>',
@@ -1226,17 +1229,11 @@ if page == "🏠 Главная":
             )
         else:
             st.markdown(
-                '<div style="font-size:13px;color:#94A3B8;padding-top:8px;">'
+                '<div style="font-size:13px;color:#94A3B8;margin-bottom:8px;">'
                 'Проверка ещё не запускалась</div>',
                 unsafe_allow_html=True,
             )
-    with col_btn:
-        run_now = st.button("🔄 Проверить сейчас", type="primary", use_container_width=True)
-
-    # Компактный календарь-окошко на Главной
-    _mcal_l, _mcal_r = st.columns([2.4, 1])
-    with _mcal_r:
-        render_mini_calendar()
+        run_now = st.button("🔄 Проверить сейчас", type="primary")
 
     if need_check and not run_now:
         st.markdown("""
@@ -1301,7 +1298,7 @@ if page == "🏠 Главная":
             else:
                 pill = '<span class="pill pill-slate">⏸ Отключён</span>'
             err = s["last_error"] or "—"
-            checked = fmt_date(s["last_checked"])
+            checked = fmt_datetime_kz(s["last_checked"]) if s["last_checked"] else "—"
             rows_html += f"""
             <tr>
                 <td style="padding:9px 14px;font-size:13px;font-weight:500;color:#0F172A;
