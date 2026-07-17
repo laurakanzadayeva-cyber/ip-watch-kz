@@ -62,7 +62,12 @@ _auth_cfg = _load_auth_config()
 # Проверяем флаг открытого доступа (auth_required = false в st.secrets отключает логин)
 _auth_required = True
 try:
-    _auth_required = str(st.secrets.get("auth_required", "true")).lower() not in ("false", "0", "no")
+    _raw = st.secrets["auth_required"]
+    # TOML парсит false как Python bool False
+    if isinstance(_raw, bool):
+        _auth_required = _raw
+    else:
+        _auth_required = str(_raw).lower() not in ("false", "0", "no")
 except Exception:
     pass
 
