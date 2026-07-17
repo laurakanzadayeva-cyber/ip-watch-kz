@@ -339,3 +339,61 @@ def destroy_session(token: str) -> None:
     if token in sessions:
         del sessions[token]
         _save_sessions(sessions)
+
+
+def _destroy_sessions_for_email(email: str) -> None:
+    """Аннулирует все долгие сессии пользователя (например, при удалении/блокировке)."""
+    email = (email or "").strip().lower()
+    sessions = _load_sessions()
+    remaining = {t: v for t, v in sessions.items() if v.get("email") != email}
+    if len(remaining) != len(sessions):
+        _save_sessions(remaining)
+
+
+# ─── Управление пользователями (админ) ───────────────────────────────────────
+
+def list_users() -> list:
+    """Список всех пользователей для отображения (без хэшей паролей)."""
+    cfg = load_users()
+    out = []
+    for key, u in cfg["credentials"]["usernames"].items():
+        out.append({
+            "username": key,
+            "name": u.get("name", ""),
+            "email": u.get("email", ""),
+            "role": u.get("role", "user"),
+            "verified": u.get("verified", True),
+            "created_at": u.get("created_at", ""),
+        })
+    out.sort(key=lambda x: x.get("created_at", ""))
+    return out
+
+
+def set_role(email: str, role: str) -> dict:
+    """Меняет роль пользователя (admin/user)."""
+    if role not in ("admin", "user"):
+        return {"ok": False, "error": "Недопустимая роль."}
+    cfg = load_users()
+    key, user = _find_user_by_email(cfg, email)
+    if not user:
+        return {"ok": False, "error": "Пользователь не найден."}
+    user["role"] = role
+    save_users(cfg)
+    return {"ok": True, "error": ""}
+
+
+def delete_user(email: str) -> dict:
+    """Удаляет пользователя и его сессии."""
+    cfg = load_users()
+    key, user = _find_user_by_email(cfg, email)
+    if not user:
+        return {"ok": False, "error": "Пользователь не найден."}
+    del cfg["credentials"]["usernames"][key]
+    save_users(cfg)
+    _destroy_sessions_for_email(email)
+    return {"ok": True, "error": ""}
+
+
+def count_admins() -> int:
+    cfg = load_users()
+    return sum(1 for u in cfg["credentials"]["usernames"].values() if u.get("role") == "admin")

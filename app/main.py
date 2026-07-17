@@ -850,22 +850,27 @@ with st.sidebar:
     <p class="sb-section-label">ОСНОВНОЕ</p>
     """, unsafe_allow_html=True)
 
+    _menu_items = [
+        "🏠 Главная",
+        "🔍 Единый поиск",
+        "📋 Профили мониторинга",
+        "🌐 Источники",
+        "▶️ Запуск проверки",
+        "📊 Результаты",
+        "📰 Бюллетень Kazpatent",
+        "⚖️ Мониторинг законодательства",
+        "📚 Правовая база",
+        "📝 Отчёты",
+        "📖 Журнал проверок",
+        "⚙️ Настройки",
+    ]
+    _is_admin = _current_user.get("role") == "admin"
+    if _is_admin:
+        _menu_items.append("👥 Пользователи")
+
     page = st.radio(
         "Раздел",
-        [
-            "🏠 Главная",
-            "🔍 Единый поиск",
-            "📋 Профили мониторинга",
-            "🌐 Источники",
-            "▶️ Запуск проверки",
-            "📊 Результаты",
-            "📰 Бюллетень Kazpatent",
-            "⚖️ Мониторинг законодательства",
-            "📚 Правовая база",
-            "📝 Отчёты",
-            "📖 Журнал проверок",
-            "⚙️ Настройки",
-        ],
+        _menu_items,
         label_visibility="collapsed",
     )
 
@@ -3174,3 +3179,90 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
                 conn.execute("DELETE FROM search_runs")
                 conn.commit()
             st.success("Журнал проверок очищен.")
+
+
+# ─── ПОЛЬЗОВАТЕЛИ (только админ) ──────────────────────────────────────────────
+
+elif page == "👥 Пользователи":
+    st.markdown("""
+    <div style="margin-bottom:16px;">
+        <div style="font-size:22px;font-weight:700;color:#0F172A;">Пользователи</div>
+        <div style="font-size:13px;color:#64748B;margin-top:3px;">
+            Зарегистрированные учётные записи, роли и доступ
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not _is_admin:
+        st.error("Раздел доступен только администраторам.")
+        st.stop()
+
+    _all_users = _auth.list_users()
+    _admin_total = _auth.count_admins()
+    _my_email = (_current_user.get("email") or "").strip().lower()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Всего пользователей", len(_all_users))
+    c2.metric("Администраторов", _admin_total)
+    c3.metric("Подтверждено", sum(1 for u in _all_users if u["verified"]))
+
+    _q = st.text_input("🔍 Поиск по имени или почте", key="users_search").strip().lower()
+    _shown = [
+        u for u in _all_users
+        if not _q or _q in u["name"].lower() or _q in u["email"].lower()
+    ]
+    if not _shown:
+        st.info("Ничего не найдено.")
+        st.stop()
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    _h = st.columns([2.4, 3, 1.4, 2, 1.3, 1.1])
+    for _col, _txt in zip(_h, ["Имя", "Почта", "Роль", "Регистрация", "Статус", "Действия"]):
+        _col.markdown(f"<div style='font-size:12px;font-weight:700;color:#64748B;'>{_txt}</div>",
+                      unsafe_allow_html=True)
+    st.markdown("<hr style='margin:4px 0 8px;border:none;border-top:1px solid #E2E8F0;'>",
+                unsafe_allow_html=True)
+
+    for u in _shown:
+        is_self = u["email"].strip().lower() == _my_email
+        is_admin_row = u["role"] == "admin"
+        col = st.columns([2.4, 3, 1.4, 2, 1.3, 1.1])
+        col[0].write(u["name"] + (" 👤" if is_self else ""))
+        col[1].write(u["email"])
+        col[2].write("🛡️ Админ" if is_admin_row else "Пользователь")
+        col[3].write(u["created_at"] or "—")
+        col[4].write("✅" if u["verified"] else "⏳")
+
+        with col[5].popover("⋯", use_container_width=True):
+            # Смена роли
+            if is_admin_row:
+                _last_admin = is_admin_row and _admin_total <= 1
+                if st.button("Снять админа", key=f"unrole_{u['email']}",
+                             disabled=_last_admin, use_container_width=True):
+                    if _last_admin:
+                        st.error("Нельзя снять роль у последнего администратора.")
+                    else:
+                        _auth.set_role(u["email"], "user")
+                        st.rerun()
+                if _last_admin:
+                    st.caption("Последний администратор.")
+            else:
+                if st.button("Сделать админом", key=f"role_{u['email']}",
+                             use_container_width=True):
+                    _auth.set_role(u["email"], "admin")
+                    st.rerun()
+
+            st.divider()
+            # Удаление
+            if is_self:
+                st.caption("Нельзя удалить свою учётную запись.")
+            elif is_admin_row and _admin_total <= 1:
+                st.caption("Нельзя удалить последнего администратора.")
+            else:
+                if st.button("🗑️ Удалить", key=f"del_{u['email']}",
+                             type="secondary", use_container_width=True):
+                    res = _auth.delete_user(u["email"])
+                    if res["ok"]:
+                        st.rerun()
+                    else:
+                        st.error(res["error"])
