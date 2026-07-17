@@ -37,6 +37,19 @@ def _load_auth_config():
     if _USERS_FILE.exists():
         with open(_USERS_FILE, encoding="utf-8") as f:
             return yaml.safe_load(f)
+    # На Streamlit Cloud читаем из st.secrets
+    try:
+        if "credentials" in st.secrets and "cookie" in st.secrets:
+            return {
+                "credentials": st.secrets["credentials"].to_dict(),
+                "cookie": {
+                    "name": st.secrets["cookie"]["name"],
+                    "key": st.secrets["cookie"]["key"],
+                    "expiry_days": st.secrets["cookie"]["expiry_days"],
+                },
+            }
+    except Exception:
+        pass
     return None
 
 def _save_auth_config(cfg: dict):

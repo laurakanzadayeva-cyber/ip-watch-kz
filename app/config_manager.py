@@ -48,7 +48,14 @@ def get_gemini_model() -> str:
 
 def get_openrouter_key() -> str:
     creds = load_credentials()
-    return creds.get("openrouter", {}).get("api_key", "")
+    key = creds.get("openrouter", {}).get("api_key", "")
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get("openrouter", {}).get("api_key", "")
+        except Exception:
+            pass
+    return key
 
 
 def get_telegram_config() -> dict:
