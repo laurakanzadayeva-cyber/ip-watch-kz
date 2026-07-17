@@ -59,7 +59,14 @@ def _save_auth_config(cfg: dict):
 
 _auth_cfg = _load_auth_config()
 
-if _auth_cfg:
+# Проверяем флаг открытого доступа (auth_required = false в st.secrets отключает логин)
+_auth_required = True
+try:
+    _auth_required = str(st.secrets.get("auth_required", "true")).lower() not in ("false", "0", "no")
+except Exception:
+    pass
+
+if _auth_cfg and _auth_required:
     import streamlit_authenticator as stauth
     warnings.filterwarnings("ignore")
 
