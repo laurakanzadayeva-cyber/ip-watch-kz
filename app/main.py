@@ -180,43 +180,61 @@ _RU_TO_LAT = {
     'с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh',
     'щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
 }
-_LAT_TO_RU = {
-    'SERGEK':'СЕРГЕК','Sergek':'Сергек','sergek':'сергек',
-    'GROUP':'ГРУПП','Group':'Групп','group':'групп',
-    'MEDIA':'МЕДИА','Media':'Медиа','media':'медиа',
-    'BI':'БИ','AI':'АЙ','KZ':'КЗ',
+# Посимвольная транслитерация латиница → кириллица (для аббревиатур: KFS→КФС, BI→БИ)
+_LAT_CHAR_TO_CYR = {
+    'A':'А','B':'Б','C':'К','D':'Д','E':'Е','F':'Ф','G':'Г','H':'Х',
+    'I':'И','J':'Ж','K':'К','L':'Л','M':'М','N':'Н','O':'О','P':'П',
+    'Q':'К','R':'Р','S':'С','T':'Т','U':'У','V':'В','W':'В','X':'КС',
+    'Y':'Й','Z':'З',
 }
 
 def _ru_to_lat(text: str) -> str:
     return ''.join(_RU_TO_LAT.get(c, c) for c in text)
 
+def _lat_to_cyr(text: str) -> str:
+    """Посимвольная транслитерация латиницы в кириллицу (для аббревиатур)."""
+    return ''.join(_LAT_CHAR_TO_CYR.get(c.upper(), c) for c in text)
+
 def _has_cyrillic(text: str) -> bool:
     return any('Ѐ' <= c <= 'ӿ' for c in text)
 
 def _auto_variants(designation: str) -> list[str]:
-    """Генерирует варианты написания: транслит и Title Case."""
+    """
+    Генерирует варианты написания обозначения:
+    - Кириллица → латиница (СЕРГЕК → SERGEK)
+    - Латиница → кириллица (KFS → КФС, SERGEK → СЕРГЕК)
+    - Title Case варианты
+    Используется чтобы один профиль охватывал оба языка.
+    """
     variants = []
     d = designation.strip()
     if not d:
         return variants
+
     if _has_cyrillic(d):
+        # Кириллица → Латиница
         lat = _ru_to_lat(d.upper())
         if lat and lat != d.upper():
             variants.append(lat)
-            variants.append(lat.capitalize())
+            # Title case латиницы
+            lat_title = lat.title()
+            if lat_title != lat:
+                variants.append(lat_title)
     else:
-        # Latin → попробуем известные слова
-        upper = d.upper()
-        cyr_parts = []
-        for word in upper.split():
-            cyr_parts.append(_LAT_TO_RU.get(word, _LAT_TO_RU.get(word.capitalize(), '')))
-        cyr = ' '.join(p for p in cyr_parts if p)
-        if cyr.strip():
+        # Латиница → Кириллица (посимвольно)
+        cyr = _lat_to_cyr(d.upper())
+        if cyr and cyr != d.upper():
             variants.append(cyr)
-    # Title Case вариант
+            # Title case кириллицы
+            cyr_title = cyr.title()
+            if cyr_title != cyr:
+                variants.append(cyr_title)
+
+    # Title Case исходного обозначения
     title = d.title()
     if title != d and title not in variants:
         variants.append(title)
+
     return list(dict.fromkeys(variants))  # убираем дубли
 
 
