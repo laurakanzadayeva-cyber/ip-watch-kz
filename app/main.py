@@ -1600,59 +1600,153 @@ elif page == "📚 Правовая база":
                 st.info("Ничего не найдено. Попробуйте другой запрос.")
 
     with tab_core:
-        st.markdown("### Основные документы правовой базы ИС")
-        st.caption("Полные тексты законов и международных договоров. Нажмите на документ для просмотра текста.")
-
-        CORE_DOCS = [
-            ("ГК_РК_Общая_часть.docx",                   "Гражданский кодекс РК — Общая часть (1994)"),
-            ("ГК_РК_Особенная_часть.docx",               "Гражданский кодекс РК — Особенная часть (1999)"),
-            ("Закон_о_товарных_знаках.docx",             "Закон РК «О товарных знаках, знаках обслуживания, географических указаниях» (1999)"),
-            ("Закон_об_авторском_праве.docx",            "Закон РК «Об авторском праве и смежных правах» (1996)"),
-            ("НП_ВС_РК_2007_N11_авторское_право.docx",  "Нормативное постановление ВС РК № 11 от 25.12.2007 о защите авторского права"),
-            ("Бернская_конвенция.docx",                  "Бернская конвенция об охране литературных и художественных произведений (1971)"),
-            ("ТРИПС.docx",                               "Соглашение ТРИПС (TRIPS) — торговые аспекты прав ИС (Марракеш, 1994)"),
-            ("ЕАЭС_Приложение26_ИС.docx",               "ЕАЭС — Приложение № 26: Протокол об охране и защите прав на объекты ИС"),
-            ("Всемирная_конвенция_авторское_право_1952.docx", "Всемирная конвенция об авторском праве (Женева, 1952)"),
-            ("ВОИС_WCT.docx",                            "Договор ВОИС по авторскому праву — WCT (WIPO Copyright Treaty)"),
-        ]
+        # Документы сгруппированы по категории
+        CORE_DOCS_BY_CAT = {
+            "Законы Республики Казахстан": [
+                ("Закон_о_товарных_знаках.docx",
+                 "Закон РК «О товарных знаках, знаках обслуживания и НМПТ»",
+                 "1999"),
+                ("Закон_об_авторском_праве.docx",
+                 "Закон РК «Об авторском праве и смежных правах»",
+                 "1996"),
+            ],
+            "Кодексы": [
+                ("ГК_РК_Общая_часть.docx",
+                 "Гражданский кодекс РК — Общая часть",
+                 "1994"),
+                ("ГК_РК_Особенная_часть.docx",
+                 "Гражданский кодекс РК — Особенная часть",
+                 "1999"),
+            ],
+            "Нормативные постановления": [
+                ("НП_ВС_РК_2007_N11_авторское_право.docx",
+                 "НП ВС РК № 11 «О применении судами законодательства об авторском праве»",
+                 "2007"),
+            ],
+            "Международные договоры": [
+                ("Бернская_конвенция.docx",
+                 "Бернская конвенция об охране лит. и худ. произведений",
+                 "1971"),
+                ("ТРИПС.docx",
+                 "Соглашение ТРИПС — торговые аспекты прав ИС",
+                 "1994"),
+                ("ЕАЭС_Приложение26_ИС.docx",
+                 "ЕАЭС Приложение № 26 — Протокол об охране прав ИС",
+                 "2014"),
+                ("Всемирная_конвенция_авторское_право_1952.docx",
+                 "Всемирная конвенция об авторском праве",
+                 "1952"),
+                ("ВОИС_WCT.docx",
+                 "Договор ВОИС по авторскому праву (WCT)",
+                 "1996"),
+            ],
+        }
 
         _core_dir = Path(__file__).parent.parent / "laws" / "core_docs"
 
-        def _extract_docx_text(path: Path) -> str:
+        def _extract_docx_text(path: Path) -> list[str]:
+            """Возвращает список абзацев документа."""
             try:
-                from docx import Document
-                doc = Document(str(path))
-                return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                from docx import Document as _DocxDoc
+                doc = _DocxDoc(str(path))
+                return [p.text for p in doc.paragraphs if p.text.strip()]
             except Exception as e:
-                return f"Ошибка чтения файла: {e}"
+                return [f"Ошибка чтения файла: {e}"]
 
-        for fname, title in CORE_DOCS:
-            fpath = _core_dir / fname
-            exists = fpath.exists()
-            icon = "📄" if exists else "⚠️"
-            with st.expander(f"{icon} {title}"):
-                if exists:
-                    col_d1, col_d2 = st.columns([1, 3])
-                    with col_d1:
-                        with open(fpath, "rb") as _f:
-                            st.download_button(
-                                "⬇️ Скачать .docx",
-                                data=_f.read(),
-                                file_name=fname,
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                key=f"dl_{fname}",
-                            )
-                    with col_d2:
-                        if st.button("📖 Показать текст", key=f"show_{fname}"):
-                            st.session_state[f"txt_{fname}"] = True
-                    if st.session_state.get(f"txt_{fname}"):
-                        text = _extract_docx_text(fpath)
-                        st.text_area("Текст документа", value=text, height=500, key=f"ta_{fname}")
-                        if st.button("Скрыть текст", key=f"hide_{fname}"):
-                            st.session_state[f"txt_{fname}"] = False
-                            st.rerun()
-                else:
-                    st.warning("Файл не найден в репозитории.")
+        def _fmt_size(path: Path) -> str:
+            kb = path.stat().st_size / 1024
+            return f"{kb:.0f} КБ" if kb < 1024 else f"{kb/1024:.1f} МБ"
+
+        # Текущий открытый документ
+        if "core_doc_open" not in st.session_state:
+            st.session_state.core_doc_open = None
+
+        # ── Список документов ─────────────────────────────────────────────────
+        for cat, docs in CORE_DOCS_BY_CAT.items():
+            st.markdown(
+                f'<div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+                f'text-transform:uppercase;color:#94A3B8;margin:16px 0 6px;">{cat}</div>',
+                unsafe_allow_html=True,
+            )
+            for fname, title, year in docs:
+                fpath = _core_dir / fname
+                exists = fpath.exists()
+                is_open = st.session_state.core_doc_open == fname
+
+                # Подсветка открытого документа
+                card_border = "border:1px solid #3B82F6;" if is_open else "border:1px solid #E2E8F0;"
+                card_bg = "background:#F0F7FF;" if is_open else "background:white;"
+
+                col_icon, col_info, col_year, col_size, col_btns = st.columns([0.4, 5, 1, 1, 2])
+
+                with col_icon:
+                    st.markdown(
+                        f'<div style="padding-top:10px;font-size:18px;">'
+                        f'{"📄" if exists else "⚠️"}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with col_info:
+                    st.markdown(
+                        f'<div style="padding-top:8px;font-size:14px;font-weight:500;color:#0F172A;">{title}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with col_year:
+                    st.markdown(
+                        f'<div style="padding-top:10px;font-size:12px;color:#94A3B8;">{year}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with col_size:
+                    if exists:
+                        st.markdown(
+                            f'<div style="padding-top:10px;font-size:12px;color:#94A3B8;">{_fmt_size(fpath)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                with col_btns:
+                    if exists:
+                        bc1, bc2 = st.columns(2)
+                        with bc1:
+                            with open(fpath, "rb") as _f:
+                                st.download_button(
+                                    "⬇ Скачать",
+                                    data=_f.read(),
+                                    file_name=fname,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dl_{fname}",
+                                    use_container_width=True,
+                                )
+                        with bc2:
+                            view_label = "✕ Закрыть" if is_open else "📖 Читать"
+                            if st.button(view_label, key=f"view_{fname}", use_container_width=True):
+                                st.session_state.core_doc_open = None if is_open else fname
+                                st.rerun()
+
+                st.markdown("<hr style='margin:2px 0;border:none;border-top:1px solid #F1F5F9;'>", unsafe_allow_html=True)
+
+                # ── Встроенный ридер ──────────────────────────────────────────
+                if is_open and exists:
+                    paragraphs = _extract_docx_text(fpath)
+                    # Первые строки — заголовок/шапка документа
+                    header_lines = paragraphs[:6]
+                    body_lines = paragraphs[6:]
+
+                    header_html = "".join(
+                        f'<p style="margin:2px 0;font-weight:600;color:#1E3A8A;">{l}</p>'
+                        for l in header_lines
+                    )
+                    body_html = "".join(
+                        f'<p style="margin:4px 0;color:#1E293B;line-height:1.6;">{l}</p>'
+                        for l in body_lines
+                    )
+
+                    st.markdown(f"""
+                    <div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:10px;
+                                padding:20px 24px;margin:4px 0 12px;max-height:560px;
+                                overflow-y:auto;font-size:13px;font-family:Georgia,serif;">
+                        <div style="margin-bottom:12px;padding-bottom:10px;
+                                    border-bottom:1px solid #BFDBFE;">{header_html}</div>
+                        <div>{body_html}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
     with tab_actual:
         from actuality_checker import CORE_DOC_REGISTRY, check_doc, check_all_docs
