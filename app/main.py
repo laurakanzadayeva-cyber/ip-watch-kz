@@ -331,7 +331,7 @@ def get_marks(filters: dict | None = None) -> list:
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " GROUP BY fm.id ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
+        query += " GROUP BY fm.id, mp.name ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
 
         return conn.execute(query, params).fetchall()
 
@@ -345,7 +345,7 @@ def get_mark_by_id(mark_id: int):
                LEFT JOIN mark_classes mc ON mc.mark_id = fm.id
                LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
                WHERE fm.id = ?
-               GROUP BY fm.id""",
+               GROUP BY fm.id, mp.name""",
             (mark_id,),
         ).fetchone()
         return mark
