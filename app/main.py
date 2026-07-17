@@ -134,10 +134,12 @@ SOURCE_LABELS = {
     "kz_bulletin": "Бюллетень KZ",
     "wipo": "WIPO",
     "madrid": "Madrid",
+    "manual": "Добавлено вручную",
 }
 OBJECT_TYPE_LABELS = {
     "trademark": "Товарный знак",
     "well_known": "Общеизвестный ТЗ",
+    "trade_name": "Фирменное наименование",
 }
 STATUS_LABELS = {
     "active": "Действует",
@@ -164,6 +166,58 @@ def fmt_date(val):
     if not val:
         return "—"
     return str(val)
+
+
+# ─── Транслитерация для товарных знаков КЗ ───────────────────────────────────
+
+_RU_TO_LAT = {
+    'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'YO','Ж':'ZH','З':'Z',
+    'И':'I','Й':'Y','К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R',
+    'С':'S','Т':'T','У':'U','Ф':'F','Х':'KH','Ц':'TS','Ч':'CH','Ш':'SH',
+    'Щ':'SHCH','Ъ':'','Ы':'Y','Ь':'','Э':'E','Ю':'YU','Я':'YA',
+    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z',
+    'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+    'с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh',
+    'щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+}
+_LAT_TO_RU = {
+    'SERGEK':'СЕРГЕК','Sergek':'Сергек','sergek':'сергек',
+    'GROUP':'ГРУПП','Group':'Групп','group':'групп',
+    'MEDIA':'МЕДИА','Media':'Медиа','media':'медиа',
+    'BI':'БИ','AI':'АЙ','KZ':'КЗ',
+}
+
+def _ru_to_lat(text: str) -> str:
+    return ''.join(_RU_TO_LAT.get(c, c) for c in text)
+
+def _has_cyrillic(text: str) -> bool:
+    return any('Ѐ' <= c <= 'ӿ' for c in text)
+
+def _auto_variants(designation: str) -> list[str]:
+    """Генерирует варианты написания: транслит и Title Case."""
+    variants = []
+    d = designation.strip()
+    if not d:
+        return variants
+    if _has_cyrillic(d):
+        lat = _ru_to_lat(d.upper())
+        if lat and lat != d.upper():
+            variants.append(lat)
+            variants.append(lat.capitalize())
+    else:
+        # Latin → попробуем известные слова
+        upper = d.upper()
+        cyr_parts = []
+        for word in upper.split():
+            cyr_parts.append(_LAT_TO_RU.get(word, _LAT_TO_RU.get(word.capitalize(), '')))
+        cyr = ' '.join(p for p in cyr_parts if p)
+        if cyr.strip():
+            variants.append(cyr)
+    # Title Case вариант
+    title = d.title()
+    if title != d and title not in variants:
+        variants.append(title)
+    return list(dict.fromkeys(variants))  # убираем дубли
 
 
 def calc_contestation(reg_date_val):
@@ -1138,12 +1192,28 @@ elif page == "📋 Профили мониторинга":
 
     with tab2:
         st.subheader("Новый профиль мониторинга")
+
+        # Превью авто-вариантов (вне формы, динамически)
+        _prev_desig = st.session_state.get("_prev_desig_input", "")
+        _prev_input = st.text_input(
+            "Основное обозначение *",
+            key="_prev_desig_input",
+            placeholder="СЕРГЕК или SERGEK — система добавит оба варианта автоматически",
+        )
+        _auto = _auto_variants(_prev_input)
+        if _auto:
+            st.info(f"🔄 Система автоматически добавит варианты: **{', '.join(_auto)}**")
+
         with st.form("create_profile"):
             name = st.text_input("Название профиля *", placeholder="Мониторинг основного бренда")
-            main_designation = st.text_input("Основное обозначение *", placeholder="Введите обозначение товарного знака")
+            main_designation = st.text_input(
+                "Основное обозначение *",
+                value=_prev_input,
+                placeholder="Введите обозначение товарного знака",
+            )
             variants_raw = st.text_area(
-                "Варианты написания (каждый с новой строки)",
-                placeholder="Кириллическая транслитерация\nСловесный элемент\nСочетание с другими словами",
+                "Дополнительные варианты (каждый с новой строки)",
+                placeholder="Сергек Медиа\nSergek Media\nБИ АЙ ГРУПП\n— авто-варианты добавятся сами",
             )
             col1, col2 = st.columns(2)
             with col1:
@@ -1199,15 +1269,21 @@ elif page == "📋 Профили мониторинга":
                             ).fetchone()
                             profile_id = row[0] if row else None
 
+                        # Авто-варианты (транслитерация)
+                        all_variants = list(_auto_variants(main_designation))
+                        # Пользовательские варианты
                         for variant in variants_raw.strip().splitlines():
                             v = variant.strip()
-                            if v:
-                                conn.execute(
-                                    "INSERT INTO profile_variants (profile_id, variant) VALUES (?,?)",
-                                    (profile_id, v),
-                                )
+                            if v and v not in all_variants:
+                                all_variants.append(v)
+                        for v in all_variants:
+                            conn.execute(
+                                "INSERT INTO profile_variants (profile_id, variant) VALUES (?,?)",
+                                (profile_id, v),
+                            )
                         conn.commit()
-                    st.success(f"Профиль «{name}» создан.")
+                    auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_variants(main_designation))}." if _auto_variants(main_designation) else ""
+                    st.success(f"Профиль «{name}» создан.{auto_msg}")
                     st.rerun()
 
 
@@ -1378,6 +1454,84 @@ elif page == "📊 Результаты":
         filters["include_in_report"] = False
 
     marks = get_marks(filters)
+
+    # ── Кнопка ручного добавления ────────────────────────────────────────────
+    with st.expander("➕ Добавить знак вручную (из реестра / НИИС)", expanded=False):
+        st.caption("Используйте для добавления знаков, найденных самостоятельно в реестре НИИС, WIPO или других источниках.")
+        with st.form("manual_add_mark"):
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                m_designation = st.text_input("Обозначение *", placeholder="СЕРГЕК AQTOBE")
+                m_reg_num = st.text_input("№ регистрации", placeholder="85439")
+                m_reg_date = st.text_input("Дата регистрации", placeholder="15.08.2023")
+                m_app_date = st.text_input("Дата подачи заявки", placeholder="12.01.2023")
+                m_owner = st.text_input("Правообладатель", placeholder="ТОО «Сергек Медиа»")
+            with mc2:
+                m_owner_addr = st.text_input("Адрес правообладателя", placeholder="г. Актобе")
+                m_classes = st.text_input("Классы МКТУ", placeholder="35, 38, 41")
+                m_goods = st.text_area("Товары/услуги", height=68, placeholder="реклама; маркетинг; передача новостей")
+                m_source = st.selectbox("Источник", options=["kz_registry", "kz_bulletin", "wipo", "madrid", "manual"],
+                                        format_func=lambda x: SOURCE_LABELS.get(x, "Вручную" if x == "manual" else x))
+                m_url = st.text_input("Ссылка на источник", placeholder="https://tirek.kz/...")
+            mc3, mc4 = st.columns(2)
+            with mc3:
+                _profiles_list = get_profiles()
+                _prof_map = {str(p["id"]): p["name"] for p in _profiles_list}
+                m_profile = st.selectbox("Профиль мониторинга", options=[""] + list(_prof_map.keys()),
+                                         format_func=lambda x: "— не привязывать —" if x == "" else _prof_map.get(x, x))
+                m_risk = st.selectbox("Степень риска", options=list(RISK_LABELS.keys()),
+                                      format_func=lambda x: RISK_LABELS.get(x, x), index=2)
+            with mc4:
+                m_object_type = st.selectbox("Тип объекта", options=list(OBJECT_TYPE_LABELS.keys()),
+                                             format_func=lambda x: OBJECT_TYPE_LABELS.get(x, x))
+                m_reason = st.text_input("Причина добавления", placeholder="Фирменное наименование, сходное до степени смешения")
+
+            if st.form_submit_button("💾 Добавить знак", type="primary"):
+                if not m_designation:
+                    st.error("Укажите обозначение.")
+                else:
+                    with get_connection() as conn:
+                        cur2 = conn.execute(
+                            """INSERT INTO found_marks
+                               (profile_id, source_code, designation, object_type,
+                                registration_number, registration_date, application_date,
+                                owner, owner_address, goods_services, source_url,
+                                match_reason, risk_level, legal_status, include_in_report)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'not_reviewed',1)""",
+                            (
+                                int(m_profile) if m_profile else None,
+                                m_source,
+                                m_designation,
+                                m_object_type,
+                                m_reg_num or None,
+                                m_reg_date or None,
+                                m_app_date or None,
+                                m_owner or None,
+                                m_owner_addr or None,
+                                m_goods or None,
+                                m_url or None,
+                                m_reason or "Добавлено вручную",
+                                m_risk,
+                            ),
+                        )
+                        new_id = cur2.lastrowid
+                        if new_id is None:
+                            row = conn.execute(
+                                "SELECT id FROM found_marks WHERE designation=? ORDER BY id DESC LIMIT 1",
+                                (m_designation,)
+                            ).fetchone()
+                            new_id = row[0] if row else None
+                        # Классы МКТУ
+                        if new_id and m_classes:
+                            for cls in m_classes.replace(" ", "").split(","):
+                                try:
+                                    conn.execute("INSERT INTO mark_classes (mark_id, nice_class) VALUES (?,?)",
+                                                 (new_id, int(cls)))
+                                except Exception:
+                                    pass
+                        conn.commit()
+                    st.success(f"Знак «{m_designation}» добавлен.")
+                    st.rerun()
 
     # Фильтр «Только оспариваемые» — применяется на стороне Python
     if f_contestable:
