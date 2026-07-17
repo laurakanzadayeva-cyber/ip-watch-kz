@@ -45,6 +45,11 @@ CODE_TTL_SECONDS = 15 * 60  # код действует 15 минут
 REMEMBER_DAYS = 30          # срок cookie «Запомнить меня»
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Роли доступа
+ROLES = ["standard", "premium", "admin"]
+ROLE_LABELS = {"standard": "Стандарт", "premium": "Премиум", "admin": "Администратор"}
+DEFAULT_ROLE = "standard"
+
 
 # ─── Низкоуровневый доступ к БД ───────────────────────────────────────────────
 
@@ -107,6 +112,11 @@ def ensure_auth_schema():
             _exec(stmt)
         except Exception as e:
             logger.warning(f"Не удалось создать таблицу авторизации: {e}")
+    # Миграция старой роли 'user' → 'standard'
+    try:
+        _exec("UPDATE app_users SET role = 'standard' WHERE role = 'user'")
+    except Exception:
+        pass
     _seed_legacy_users()
 
 
@@ -332,7 +342,7 @@ def register_confirm(email: str, code: str) -> dict:
     _exec(
         "INSERT INTO app_users (email, name, password_hash, role, verified, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (email, row["name"], row["password_hash"], "user", 1,
+        (email, row["name"], row["password_hash"], DEFAULT_ROLE, 1,
          time.strftime("%Y-%m-%d %H:%M:%S")),
     )
     _exec("DELETE FROM pending_registrations WHERE email = ?", (email,))
@@ -409,7 +419,7 @@ def list_users() -> list:
 
 
 def set_role(email: str, role: str) -> dict:
-    if role not in ("admin", "user"):
+    if role not in ROLES:
         return {"ok": False, "error": "Недопустимая роль."}
     if not email_exists(email):
         return {"ok": False, "error": "Пользователь не найден."}

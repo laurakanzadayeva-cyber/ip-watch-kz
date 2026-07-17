@@ -359,6 +359,80 @@ def fmt_datetime_kz(val) -> str:
         return str(val)
 
 
+def render_mini_calendar():
+    """Компактный календарь текущего месяца (для Главной): дата РК + сетка + сроки."""
+    import calendar as _cm
+    _MON = ["", "января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+            "августа", "сентября", "октября", "ноября", "декабря"]
+    _MON_NOM = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
+                "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    _WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    now = kz_now()
+    today = now.date()
+
+    # ближайшие сроки (90 дней) — счётчик
+    upcoming_cnt = 0
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT registration_date FROM found_marks "
+            "WHERE registration_date IS NOT NULL AND registration_date != ''"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            ct = calc_contestation(r["registration_date"])
+            if ct.get("deadline"):
+                try:
+                    dd = datetime.strptime(ct["deadline"], "%d.%m.%Y").date()
+                    if 0 <= (dd - today).days <= 90:
+                        upcoming_cnt += 1
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
+    weeks = _cm.monthcalendar(today.year, today.month)
+    body = ""
+    for wk in weeks:
+        body += "<tr>"
+        for i, d in enumerate(wk):
+            if d == 0:
+                body += "<td></td>"
+                continue
+            is_t = (d == today.day)
+            wknd = i >= 5
+            style = ("background:#2563EB;color:#fff;font-weight:700;" if is_t
+                     else f"color:{'#DC2626' if wknd else '#334155'};")
+            body += (f"<td style='text-align:center;padding:3px 0;font-size:11px;"
+                     f"border-radius:6px;{style}'>{d}</td>")
+        body += "</tr>"
+    head = "".join(f"<th style='font-size:10px;color:#94A3B8;font-weight:700;"
+                   f"padding-bottom:3px;'>{w}</th>" for w in _WD)
+    deadline_line = (
+        f"<div style='margin-top:8px;font-size:11.5px;color:#B45309;"
+        f"background:#FEF3C7;border-radius:6px;padding:5px 8px;'>"
+        f"⏳ Ближайшие сроки (90 дн.): <b>{upcoming_cnt}</b></div>"
+        if upcoming_cnt else
+        "<div style='margin-top:8px;font-size:11.5px;color:#64748B;'>Ближайших сроков нет</div>"
+    )
+    st.markdown(f"""
+    <div style="background:#fff;border:1px solid #E2E8F0;border-radius:14px;
+                padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04);">
+        <div style="font-size:12px;color:#64748B;font-weight:600;">📅 {_MON_NOM[today.month]} {today.year}</div>
+        <div style="font-size:20px;font-weight:800;color:#1E3A8A;line-height:1.1;margin:2px 0 4px;">
+            {today.day} {_MON[today.month]}
+        </div>
+        <div style="font-size:11px;color:#94A3B8;margin-bottom:8px;">
+            🕐 {now:%H:%M} · Алматы (UTC+5)
+        </div>
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+            <thead><tr>{head}</tr></thead><tbody>{body}</tbody>
+        </table>
+        {deadline_line}
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def calc_contestation(reg_date_val):
     """5-летний срок оспаривания ТЗ с даты регистрации (ст. 28 Закона о ТЗ РК)."""
     if not reg_date_val:
@@ -1096,7 +1170,7 @@ if page == "🏠 Главная":
     else:
         need_check = True
 
-    col_title, col_btn = st.columns([3, 1])
+    col_title, col_btn = st.columns([2.4, 1])
     with col_title:
         if last_run_str:
             st.markdown(
@@ -1114,6 +1188,11 @@ if page == "🏠 Главная":
             )
     with col_btn:
         run_now = st.button("🔄 Проверить сейчас", type="primary", use_container_width=True)
+
+    # Компактный календарь-окошко на Главной
+    _mcal_l, _mcal_r = st.columns([2.4, 1])
+    with _mcal_r:
+        render_mini_calendar()
 
     if need_check and not run_now:
         st.markdown("""
@@ -3493,40 +3572,46 @@ elif page == "👥 Пользователи":
     st.markdown("<hr style='margin:4px 0 8px;border:none;border-top:1px solid #E2E8F0;'>",
                 unsafe_allow_html=True)
 
+    _ROLE_BADGE = {
+        "admin": "🛡️ Администратор", "premium": "⭐ Премиум", "standard": "👤 Стандарт",
+    }
     for u in _shown:
         is_self = u["email"].strip().lower() == _my_email
         is_admin_row = u["role"] == "admin"
+        _last_admin = is_admin_row and _admin_total <= 1
         col = st.columns([2.4, 3, 1.4, 2, 1.3, 1.1])
         col[0].write(u["name"] + (" 👤" if is_self else ""))
         col[1].write(u["email"])
-        col[2].write("🛡️ Админ" if is_admin_row else "Пользователь")
+        col[2].write(_ROLE_BADGE.get(u["role"], u["role"]))
         col[3].write(u["created_at"] or "—")
         col[4].write("✅" if u["verified"] else "⏳")
 
         with col[5].popover("⋯", use_container_width=True):
-            # Смена роли
-            if is_admin_row:
-                _last_admin = is_admin_row and _admin_total <= 1
-                if st.button("Снять админа", key=f"unrole_{u['email']}",
-                             disabled=_last_admin, use_container_width=True):
-                    if _last_admin:
-                        st.error("Нельзя снять роль у последнего администратора.")
-                    else:
-                        _auth.set_role(u["email"], "user")
-                        st.rerun()
-                if _last_admin:
-                    st.caption("Последний администратор.")
-            else:
-                if st.button("Сделать админом", key=f"role_{u['email']}",
-                             use_container_width=True):
-                    _auth.set_role(u["email"], "admin")
+            # ── Смена роли ────────────────────────────────────────────────────
+            st.markdown("**Роль**")
+            _cur_idx = _auth.ROLES.index(u["role"]) if u["role"] in _auth.ROLES else 0
+            _new_role = st.selectbox(
+                "Роль", _auth.ROLES, index=_cur_idx,
+                format_func=lambda r: _auth.ROLE_LABELS.get(r, r),
+                key=f"role_sel_{u['email']}", label_visibility="collapsed",
+            )
+            _role_lock = _last_admin and _new_role != "admin"
+            if st.button("Применить роль", key=f"role_apply_{u['email']}",
+                         disabled=(_new_role == u["role"] or _role_lock),
+                         use_container_width=True):
+                res = _auth.set_role(u["email"], _new_role)
+                if res["ok"]:
                     st.rerun()
+                else:
+                    st.error(res["error"])
+            if _role_lock:
+                st.caption("Нельзя понизить последнего администратора.")
 
             st.divider()
-            # Удаление
+            # ── Удаление ──────────────────────────────────────────────────────
             if is_self:
                 st.caption("Нельзя удалить свою учётную запись.")
-            elif is_admin_row and _admin_total <= 1:
+            elif _last_admin:
                 st.caption("Нельзя удалить последнего администратора.")
             else:
                 if st.button("🗑️ Удалить", key=f"del_{u['email']}",
