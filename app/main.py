@@ -289,12 +289,13 @@ def get_sources():
 
 def get_marks(filters: dict | None = None) -> list:
     with get_connection() as conn:
+        # Подзапрос для nice_classes — избегаем GROUP BY (проблема в PostgreSQL)
         query = """
             SELECT fm.*,
-                   GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class) AS nice_classes_str,
+                   (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
+                    FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
                    mp.name AS profile_name
             FROM found_marks fm
-            LEFT JOIN mark_classes mc ON mc.mark_id = fm.id
             LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
         """
         conditions = []
@@ -331,7 +332,7 @@ def get_marks(filters: dict | None = None) -> list:
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " GROUP BY fm.id, mp.name ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
+        query += " ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
 
         return conn.execute(query, params).fetchall()
 
@@ -339,13 +340,13 @@ def get_marks(filters: dict | None = None) -> list:
 def get_mark_by_id(mark_id: int):
     with get_connection() as conn:
         mark = conn.execute(
-            """SELECT fm.*, GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class) AS nice_classes_str,
+            """SELECT fm.*,
+                      (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
+                       FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
                       mp.name AS profile_name
                FROM found_marks fm
-               LEFT JOIN mark_classes mc ON mc.mark_id = fm.id
                LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
-               WHERE fm.id = ?
-               GROUP BY fm.id, mp.name""",
+               WHERE fm.id = ?""",
             (mark_id,),
         ).fetchone()
         return mark
