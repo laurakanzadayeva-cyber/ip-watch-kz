@@ -166,6 +166,45 @@ def fmt_date(val):
     return str(val)
 
 
+def calc_contestation(reg_date_val):
+    """5-летний срок оспаривания ТЗ с даты регистрации (ст. 28 Закона о ТЗ РК)."""
+    if not reg_date_val:
+        return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
+    try:
+        if isinstance(reg_date_val, datetime):
+            reg_date = reg_date_val.date()
+        elif isinstance(reg_date_val, date):
+            reg_date = reg_date_val
+        else:
+            s = str(reg_date_val).strip()[:10]
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d"):
+                try:
+                    reg_date = datetime.strptime(s, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            else:
+                return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
+
+        deadline = date(reg_date.year + 5, reg_date.month, reg_date.day)
+        today = date.today()
+        days_left = (deadline - today).days
+
+        if days_left < 0:
+            return {"status": "expired", "label": "❌ Истёк",
+                    "days_left": days_left, "deadline": deadline.strftime("%d.%m.%Y")}
+        elif days_left <= 180:
+            return {"status": "urgent", "label": f"⚠️ {days_left} дн.",
+                    "days_left": days_left, "deadline": deadline.strftime("%d.%m.%Y")}
+        else:
+            y, m = days_left // 365, (days_left % 365) // 30
+            lbl = f"✅ {y}л {m}м" if y > 0 else f"✅ {m} мес."
+            return {"status": "open", "label": lbl,
+                    "days_left": days_left, "deadline": deadline.strftime("%d.%m.%Y")}
+    except Exception:
+        return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
+
+
 def get_profiles():
     with get_connection() as conn:
         return conn.execute("SELECT * FROM monitoring_profiles ORDER BY name").fetchall()
@@ -1315,6 +1354,10 @@ elif page == "📊 Результаты":
             f_in_report = st.selectbox("В отчёт", ["", "yes", "no"], format_func=lambda x: {
                 "": "Все", "yes": "Да", "no": "Нет"
             }.get(x, x))
+            f_contestable = st.checkbox(
+                "⚖️ Только оспариваемые",
+                help="Показать знаки, по которым срок оспаривания (5 лет) ещё не истёк",
+            )
 
     filters = {}
     if f_source:
@@ -1336,6 +1379,17 @@ elif page == "📊 Результаты":
 
     marks = get_marks(filters)
 
+    # Фильтр «Только оспариваемые» — применяется на стороне Python
+    if f_contestable:
+        marks = [m for m in marks
+                 if calc_contestation(m["registration_date"])["status"] in ("open", "urgent")]
+
+    # Счётчики срочных к оспариванию
+    urgent_count = sum(1 for m in marks
+                       if calc_contestation(m["registration_date"])["status"] == "urgent")
+    if urgent_count:
+        st.warning(f"⚠️ **{urgent_count} знак(ов)** — срок оспаривания истекает менее чем через 6 месяцев!")
+
     st.markdown(f"**Найдено записей:** {len(marks)}")
 
     if not marks:
@@ -1344,6 +1398,7 @@ elif page == "📊 Результаты":
         # Таблица
         rows = []
         for m in marks:
+            ct = calc_contestation(m["registration_date"])
             rows.append({
                 "ID": m["id"],
                 "Риск": RISK_BADGE.get(m["risk_level"], m["risk_level"] or "—"),
@@ -1351,6 +1406,8 @@ elif page == "📊 Результаты":
                 "Тип": OBJECT_TYPE_LABELS.get(m["object_type"], m["object_type"] or "—"),
                 "Источник": SOURCE_LABELS.get(m["source_code"], m["source_code"] or "—"),
                 "№ рег.": m["registration_number"] or "—",
+                "Дата рег.": fmt_date(m["registration_date"]),
+                "Срок оспаривания": ct["label"],
                 "Классы МКТУ": m["nice_classes_str"] or "—",
                 "Правообладатель": m["owner"] or "—",
                 "Статус знака": STATUS_LABELS.get(m["status_mark"], m["status_mark"] or "—"),
@@ -1409,6 +1466,38 @@ def _show_mark_card(mark_id: int):
 
     if mark["goods_services"]:
         st.write(f"**Товары/услуги:** {mark['goods_services']}")
+
+    # ── Срок оспаривания ──────────────────────────────────────────────────────
+    ct = calc_contestation(mark["registration_date"])
+    if ct["status"] != "unknown":
+        color_map = {"open": "#16a34a", "urgent": "#d97706", "expired": "#dc2626"}
+        bg_map    = {"open": "#f0fdf4", "urgent": "#fffbeb", "expired": "#fef2f2"}
+        border_map = {"open": "#bbf7d0", "urgent": "#fde68a", "expired": "#fecaca"}
+        color  = color_map.get(ct["status"], "#64748b")
+        bg     = bg_map.get(ct["status"], "#f8fafc")
+        border = border_map.get(ct["status"], "#e2e8f0")
+
+        if ct["status"] == "expired":
+            verdict = "Срок оспаривания истёк — аннулирование через суд затруднено"
+        elif ct["status"] == "urgent":
+            verdict = f"⚠️ Срочно! Осталось {ct['days_left']} дней — необходимо подать возражение"
+        else:
+            verdict = f"Можно подать возражение в НИИС до {ct['deadline']}"
+
+        st.markdown(f"""
+        <div style="border:1px solid {border};border-radius:10px;background:{bg};
+                    padding:14px 18px;margin:12px 0;">
+            <div style="font-size:13px;color:#64748b;margin-bottom:4px;font-weight:600;
+                        text-transform:uppercase;letter-spacing:0.5px;">
+                ⚖️ Срок оспаривания (5 лет с даты регистрации)
+            </div>
+            <div style="font-size:20px;font-weight:700;color:{color};">
+                {ct['label']} &nbsp;·&nbsp;
+                <span style="font-size:14px;font-weight:400;">до {ct['deadline']}</span>
+            </div>
+            <div style="font-size:13px;color:#475569;margin-top:4px;">{verdict}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("### ⚖️ Юридическая оценка")
     with st.form(f"legal_form_{mark_id}"):
