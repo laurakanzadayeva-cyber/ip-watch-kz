@@ -520,25 +520,19 @@ with st.sidebar:
             "📚 Правовая база",
             "📝 Отчёты",
             "📖 Журнал проверок",
-            "📄 Возражения",
             "⚙️ Настройки",
         ],
         label_visibility="collapsed",
     )
 
     st.markdown("""
-    <div style="margin:auto 16px 20px;padding:16px;background:#EFF6FF;
-                border-radius:10px;margin-top:20px;">
+    <div style="margin:16px;padding:14px;background:#EFF6FF;border-radius:10px;">
         <div style="font-size:13px;font-weight:600;color:#1E40AF;margin-bottom:4px;">
-            Нужна помощь?
+            📊 Мониторинг ТЗ
         </div>
-        <div style="font-size:12px;color:#3B82F6;margin-bottom:10px;line-height:1.4;">
-            Мы подготовили инструкцию по работе с генератором возражений.
-        </div>
-        <div style="text-align:center;background:#2563EB;color:white;
-                    padding:7px 12px;border-radius:6px;font-size:12px;
-                    font-weight:600;cursor:pointer;">
-            Открыть инструкцию ↗
+        <div style="font-size:12px;color:#3B82F6;line-height:1.5;">
+            Система автоматически проверяет реестр Kazpatent и отслеживает
+            новые регистрации и общеизвестные знаки.
         </div>
     </div>
     """, unsafe_allow_html=True)
