@@ -862,20 +862,27 @@ div[data-testid="stButton"] > button[kind="secondary"] {
 .risk-badge-low    { background:#10B981; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
 .risk-badge-info   { background:#3B82F6; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
 
+/* ── Единая карточка ─────────────────────────────────────────────────────── */
+.card { background:#fff; border:1px solid #E2E8F0; border-radius:14px;
+        box-shadow:0 1px 3px rgba(15,23,42,.05); padding:16px 18px; }
+
 /* ── Метрики (новый стиль) ───────────────────────────────────────────────── */
-.mc-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:12px 0 20px; }
-.mc { background:white; border:1px solid #E2E8F0; border-radius:10px; padding:16px 18px; position:relative; overflow:hidden; }
+.mc-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:12px 0 22px; }
+.mc { background:#fff; border:1px solid #E2E8F0; border-radius:14px; padding:16px 18px;
+      position:relative; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,.05);
+      transition:transform .12s ease, box-shadow .12s ease; }
+.mc:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(15,23,42,.09); }
 .mc::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
 .mc-blue::before  { background:#3B82F6; }
 .mc-slate::before { background:#94A3B8; }
 .mc-red::before   { background:#EF4444; }
 .mc-amber::before { background:#F59E0B; }
 .mc-green::before { background:#10B981; }
-.mc-label { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:#64748B; margin-bottom:10px; }
-.mc-value { font-size:28px; font-weight:700; color:#0F172A; line-height:1; }
+.mc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.mc-label { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:#64748B; }
+.mc-ic { font-size:16px; line-height:1; opacity:.9; }
+.mc-value { font-size:30px; font-weight:800; color:#0F172A; line-height:1; }
 .mc-sub   { font-size:11px; color:#94A3B8; margin-top:5px; }
-.mc-trend-up   { font-size:11px; color:#EF4444; margin-top:5px; }
-.mc-trend-ok   { font-size:11px; color:#10B981; margin-top:5px; }
 
 /* ── Статус-пиллы ───────────────────────────────────────────────────────── */
 .pill { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
@@ -886,9 +893,20 @@ div[data-testid="stButton"] > button[kind="secondary"] {
 .pill-slate  { background:#F1F5F9; color:#475569; }
 
 /* ── Заголовки секций ────────────────────────────────────────────────────── */
-.section-header { font-size:16px; font-weight:600; color:#0F172A; margin:0 0 10px; display:flex; align-items:center; justify-content:space-between; }
+.section-header { font-size:15px; font-weight:700; color:#0F172A; margin:2px 0 10px;
+                  display:flex; align-items:center; justify-content:space-between;
+                  padding-bottom:6px; border-bottom:1px solid #E5E7EB; }
 .section-link   { font-size:12px; font-weight:500; color:#3B82F6; cursor:pointer; }
-.section-header { font-size:18px; font-weight:600; color:#111827; margin-bottom:8px; padding-bottom:6px; border-bottom:2px solid #E5E7EB; }
+
+/* ── Таблицы (единый стиль) ──────────────────────────────────────────────── */
+.ipw-table { width:100%; border-collapse:collapse; background:#fff;
+             border:1px solid #E2E8F0; border-radius:12px; overflow:hidden; }
+.ipw-table thead tr { background:#F8FAFC; }
+.ipw-table th { padding:9px 14px; text-align:left; font-size:10px; font-weight:700;
+                letter-spacing:.5px; text-transform:uppercase; color:#64748B; }
+.ipw-table td { padding:10px 14px; font-size:13px; color:#0F172A; border-top:1px solid #F1F5F9; }
+.ipw-table tbody tr:nth-child(even) { background:#FCFDFE; }
+.ipw-table tbody tr:hover { background:#F5F9FF; }
 
 /* ── Страница Возражения ─────────────────────────────────────────────────── */
 .opp-hero {
@@ -1260,34 +1278,34 @@ if page == "🏠 Главная":
     st.markdown(f"""
     <div class="mc-grid">
         <div class="mc mc-blue">
-            <div class="mc-label">Активных профилей</div>
+            <div class="mc-top"><span class="mc-label">Активных профилей</span><span class="mc-ic">📋</span></div>
             <div class="mc-value">{active_profiles_count}</div>
             <div class="mc-sub">Под наблюдением</div>
         </div>
         <div class="mc mc-slate">
-            <div class="mc-label">Всего найдено</div>
+            <div class="mc-top"><span class="mc-label">Всего найдено</span><span class="mc-ic">🔍</span></div>
             <div class="mc-value">{total_marks}</div>
             <div class="mc-sub">Совпадений за всё время</div>
         </div>
         <div class="mc mc-red">
-            <div class="mc-label">Высокий риск</div>
+            <div class="mc-top"><span class="mc-label">Высокий риск</span><span class="mc-ic">🚨</span></div>
             <div class="mc-value">{high_risk}</div>
             <div class="mc-sub">Требует немедленного внимания</div>
         </div>
         <div class="mc mc-amber">
-            <div class="mc-label">Средний риск</div>
+            <div class="mc-top"><span class="mc-label">Средний риск</span><span class="mc-ic">⚠️</span></div>
             <div class="mc-value">{medium_risk}</div>
             <div class="mc-sub">Под наблюдением</div>
         </div>
         <div class="mc mc-green">
-            <div class="mc-label">Не проверено</div>
+            <div class="mc-top"><span class="mc-label">Не проверено</span><span class="mc-ic">🕓</span></div>
             <div class="mc-value">{new_count}</div>
             <div class="mc-sub">Ожидают правовой оценки</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="section-header" style="font-size:15px;font-weight:600;color:#0F172A;margin-bottom:8px;">Статус источников</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Статус источников</div>', unsafe_allow_html=True)
 
     sources = get_sources()
     if sources:
@@ -1301,32 +1319,18 @@ if page == "🏠 Главная":
             checked = fmt_datetime_kz(s["last_checked"]) if s["last_checked"] else "—"
             rows_html += f"""
             <tr>
-                <td style="padding:9px 14px;font-size:13px;font-weight:500;color:#0F172A;
-                           border-bottom:1px solid #F1F5F9;">{s['name']}</td>
-                <td style="padding:9px 14px;border-bottom:1px solid #F1F5F9;">{pill}</td>
-                <td style="padding:9px 14px;font-size:13px;color:#64748B;
-                           border-bottom:1px solid #F1F5F9;">{checked}</td>
-                <td style="padding:9px 14px;font-size:13px;color:#94A3B8;
-                           border-bottom:1px solid #F1F5F9;">{err}</td>
+                <td style="font-weight:500;">{s['name']}</td>
+                <td>{pill}</td>
+                <td style="color:#64748B;">{checked}</td>
+                <td style="color:#94A3B8;">{err}</td>
             </tr>"""
         st.markdown(f"""
-        <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
-            <table style="width:100%;border-collapse:collapse;">
-                <thead>
-                    <tr style="background:#F8FAFC;">
-                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
-                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Источник</th>
-                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
-                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Статус</th>
-                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
-                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Последняя проверка</th>
-                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
-                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Ошибка</th>
-                    </tr>
-                </thead>
-                <tbody>{rows_html}</tbody>
-            </table>
-        </div>
+        <table class="ipw-table">
+            <thead><tr>
+                <th>Источник</th><th>Статус</th><th>Последняя проверка</th><th>Ошибка</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+        </table>
         """, unsafe_allow_html=True)
     else:
         st.info("Источники не настроены.")
