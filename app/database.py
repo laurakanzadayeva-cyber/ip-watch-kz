@@ -1,16 +1,17 @@
 import sqlite3
 import os
 from pathlib import Path
-from paths import DB_PATH, init_user_dirs
 
-init_user_dirs()
-
-
-def get_connection():
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+try:
+    from db_adapter import get_connection
+except ImportError:
+    from paths import DB_PATH, init_user_dirs
+    init_user_dirs()
+    def get_connection():
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
 
 
 def init_db():
