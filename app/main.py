@@ -34,6 +34,12 @@ import auth as _auth
 import extra_streamlit_components as stx
 from datetime import timedelta
 
+# Создаём таблицы авторизации и переносим старых пользователей (один раз за сессию).
+# Должно выполниться ДО экрана входа, который читает эти таблицы.
+if not st.session_state.get("_auth_schema_ready"):
+    _auth.ensure_auth_schema()
+    st.session_state["_auth_schema_ready"] = True
+
 # Проверяем флаг открытого доступа (auth_required = false в st.secrets отключает вход)
 _auth_required = True
 try:

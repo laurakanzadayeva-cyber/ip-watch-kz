@@ -1,14 +1,14 @@
 """
 Регистрация и вход пользователей с подтверждением почты.
 
-Хранилище пользователей — config/users.yaml (совместимо со старым форматом
-streamlit_authenticator: credentials.usernames.<key> = {email, name, password, role}).
+Хранилище — база данных (через db_adapter.get_connection): SQLite локально,
+Supabase/PostgreSQL в облаке. Данные переживают перезапуски Streamlit Cloud.
+
+Таблицы: app_users, pending_registrations, user_sessions.
 Пароли хэшируются bcrypt. Код подтверждения отправляется на почту через SMTP
-(настройки — блок "smtp" в credentials.json). Ожидающие подтверждения регистрации
-хранятся в config/pending.json с TTL.
+(блок "smtp" в credentials.json локально или в st.secrets в облаке).
 """
 
-import json
 import logging
 import random
 import re
@@ -20,65 +20,167 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
-import yaml
 import bcrypt
 
 from config_manager import load_credentials
 
+try:
+    from db_adapter import get_connection
+except ImportError:  # запуск вне пакета
+    import sqlite3
+    from paths import DB_PATH, init_user_dirs
+
+    def get_connection():
+        init_user_dirs()
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        return conn
+
 logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = Path(__file__).parent.parent / "config"
-_USERS_FILE = _CONFIG_DIR / "users.yaml"
-_PENDING_FILE = _CONFIG_DIR / "pending.json"
-_SESSIONS_FILE = _CONFIG_DIR / "sessions.json"
-
-REMEMBER_DAYS = 30  # срок действия cookie «Запомнить меня»
+_LEGACY_USERS_FILE = _CONFIG_DIR / "users.yaml"
 
 CODE_TTL_SECONDS = 15 * 60  # код действует 15 минут
+REMEMBER_DAYS = 30          # срок cookie «Запомнить меня»
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-# ─── Хранилище пользователей ─────────────────────────────────────────────────
+# ─── Низкоуровневый доступ к БД ───────────────────────────────────────────────
 
-def _default_config() -> dict:
+def _fetchone(sql: str, params=()):
+    conn = get_connection()
+    try:
+        cur = conn.execute(sql, params)
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def _fetchall(sql: str, params=()):
+    conn = get_connection()
+    try:
+        cur = conn.execute(sql, params)
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def _exec(sql: str, params=()):
+    conn = get_connection()
+    try:
+        conn.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS app_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        verified INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS pending_registrations (
+        email TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        code TEXT NOT NULL,
+        expires DOUBLE PRECISION NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_sessions (
+        token TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        expires DOUBLE PRECISION NOT NULL
+    )""",
+]
+
+
+def ensure_auth_schema():
+    """Создаёт таблицы (best-effort) и переносит старых пользователей из users.yaml."""
+    for stmt in _SCHEMA:
+        try:
+            _exec(stmt)
+        except Exception as e:
+            logger.warning(f"Не удалось создать таблицу авторизации: {e}")
+    _seed_legacy_users()
+
+
+def _seed_legacy_users():
+    """Если app_users пуста — переносит пользователей из users.yaml / st.secrets."""
+    try:
+        if _fetchone("SELECT 1 FROM app_users LIMIT 1"):
+            return
+    except Exception:
+        return  # таблицы ещё нет (облако без выполненного SQL)
+
+    legacy = {}
+
+    # 1) локальный users.yaml
+    if _LEGACY_USERS_FILE.exists():
+        try:
+            import yaml
+            with open(_LEGACY_USERS_FILE, encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            legacy.update(cfg.get("credentials", {}).get("usernames", {}))
+        except Exception as e:
+            logger.warning(f"users.yaml не прочитан: {e}")
+
+    # 2) Streamlit Secrets (облако)
+    try:
+        import streamlit as st
+        sec = st.secrets.get("credentials", {})
+        usernames = sec.get("usernames", {}) if hasattr(sec, "get") else {}
+        for k, v in dict(usernames).items():
+            legacy.setdefault(k, dict(v))
+    except Exception:
+        pass
+
+    for _, u in legacy.items():
+        email = str(u.get("email", "")).strip().lower()
+        pwd = u.get("password", "")
+        if not email or not pwd:
+            continue
+        try:
+            _exec(
+                "INSERT INTO app_users (email, name, password_hash, role, verified, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (email, u.get("name", email), pwd, u.get("role", "user"), 1,
+                 time.strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            logger.info(f"Перенесён пользователь из legacy: {email}")
+        except Exception as e:
+            logger.warning(f"Не удалось перенести {email}: {e}")
+
+
+# ─── Пользователи ─────────────────────────────────────────────────────────────
+
+def _row_to_user(row) -> dict:
     return {
-        "cookie": {
-            "expiry_days": 30,
-            "key": "ipwatch_sergek_secret_key_2024",
-            "name": "ipwatch_auth",
-        },
-        "credentials": {"usernames": {}},
+        "username": row["email"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "verified": bool(row["verified"]),
+        "created_at": row["created_at"] or "",
     }
 
 
-def load_users() -> dict:
-    if _USERS_FILE.exists():
-        with open(_USERS_FILE, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-    else:
-        cfg = _default_config()
-    cfg.setdefault("credentials", {}).setdefault("usernames", {})
-    return cfg
-
-
-def save_users(cfg: dict) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(_USERS_FILE, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-
-def _find_user_by_email(cfg: dict, email: str):
-    """Возвращает (username_key, user_dict) или (None, None)."""
-    email = email.strip().lower()
-    for key, u in cfg["credentials"]["usernames"].items():
-        if str(u.get("email", "")).strip().lower() == email:
-            return key, u
-    return None, None
+def _get_user_row(email: str):
+    email = (email or "").strip().lower()
+    return _fetchone(
+        "SELECT email, name, password_hash, role, verified, created_at"
+        " FROM app_users WHERE LOWER(email) = ?",
+        (email,),
+    )
 
 
 def email_exists(email: str) -> bool:
-    key, _ = _find_user_by_email(load_users(), email)
-    return key is not None
+    return _get_user_row(email) is not None
 
 
 # ─── Пароли ──────────────────────────────────────────────────────────────────
@@ -97,48 +199,32 @@ def _check_password(password: str, hashed: str) -> bool:
 # ─── Вход ────────────────────────────────────────────────────────────────────
 
 def verify_login(email: str, password: str):
-    """
-    Проверяет пару email+пароль.
-    Возвращает user_dict (с добавленным ключом 'username') либо None.
-    """
-    cfg = load_users()
-    key, user = _find_user_by_email(cfg, email)
-    if not user:
+    """Проверяет email+пароль. Возвращает user_dict либо None."""
+    row = _get_user_row(email)
+    if not row:
         return None
-    if not _check_password(password, user.get("password", "")):
+    if not _check_password(password, row["password_hash"]):
         return None
-    if not user.get("verified", True):  # старые записи считаем подтверждёнными
+    if not bool(row["verified"]):
         return None
-    return {**user, "username": key}
-
-
-# ─── Ожидающие подтверждения ─────────────────────────────────────────────────
-
-def _load_pending() -> dict:
-    if _PENDING_FILE.exists():
-        try:
-            with open(_PENDING_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
-
-
-def _save_pending(data: dict) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(_PENDING_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def _purge_expired(pending: dict) -> dict:
-    now = time.time()
-    return {e: v for e, v in pending.items() if v.get("expires", 0) > now}
+    return _row_to_user(row)
 
 
 # ─── Отправка письма ─────────────────────────────────────────────────────────
 
 def _get_smtp_config() -> dict:
-    return load_credentials().get("smtp", {})
+    cfg = load_credentials().get("smtp", {})
+    if cfg.get("host") and cfg.get("user") and cfg.get("password"):
+        return cfg
+    # Облако: берём из Streamlit Secrets
+    try:
+        import streamlit as st
+        sec = st.secrets.get("smtp", {})
+        if sec:
+            return dict(sec)
+    except Exception:
+        pass
+    return cfg
 
 
 def smtp_configured() -> bool:
@@ -147,7 +233,6 @@ def smtp_configured() -> bool:
 
 
 def _send_email(to_email: str, code: str) -> None:
-    """Отправляет письмо с кодом. Бросает исключение при ошибке SMTP."""
     cfg = _get_smtp_config()
     host = cfg.get("host", "smtp.gmail.com")
     port = int(cfg.get("port", 465))
@@ -183,7 +268,7 @@ def _send_email(to_email: str, code: str) -> None:
         with smtplib.SMTP_SSL(host, port, context=context, timeout=20) as server:
             server.login(user, password)
             server.sendmail(user, to_email, msg.as_string())
-    else:  # 587 / STARTTLS
+    else:
         with smtplib.SMTP(host, port, timeout=20) as server:
             server.starttls(context=context)
             server.login(user, password)
@@ -193,11 +278,6 @@ def _send_email(to_email: str, code: str) -> None:
 # ─── Регистрация ─────────────────────────────────────────────────────────────
 
 def register_start(name: str, email: str, password: str) -> dict:
-    """
-    Шаг 1 регистрации: валидация, генерация кода, отправка письма.
-    Возвращает {"ok": bool, "error": str, "dev_code": str|None}.
-    dev_code заполняется, только если SMTP не настроен (режим разработки).
-    """
     name = (name or "").strip()
     email = (email or "").strip().lower()
 
@@ -211,19 +291,16 @@ def register_start(name: str, email: str, password: str) -> dict:
         return {"ok": False, "error": "Пользователь с такой почтой уже зарегистрирован. Войдите."}
 
     code = f"{random.randint(0, 999999):06d}"
-    pending = _purge_expired(_load_pending())
-    pending[email] = {
-        "name": name,
-        "password_hash": hash_password(password),
-        "code": code,
-        "expires": time.time() + CODE_TTL_SECONDS,
-    }
-    _save_pending(pending)
+    _exec("DELETE FROM pending_registrations WHERE email = ?", (email,))
+    _exec(
+        "INSERT INTO pending_registrations (email, name, password_hash, code, expires)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (email, name, hash_password(password), code, time.time() + CODE_TTL_SECONDS),
+    )
 
     if not smtp_configured():
         logger.warning("SMTP не настроен — код показывается в интерфейсе (dev-режим).")
         return {"ok": True, "error": "", "dev_code": code}
-
     try:
         _send_email(email, code)
         return {"ok": True, "error": "", "dev_code": None}
@@ -232,54 +309,50 @@ def register_start(name: str, email: str, password: str) -> dict:
         return {"ok": False, "error": f"Не удалось отправить письмо: {e}"}
 
 
+def _get_pending(email: str):
+    return _fetchone(
+        "SELECT email, name, password_hash, code, expires"
+        " FROM pending_registrations WHERE email = ?",
+        (email,),
+    )
+
+
 def register_confirm(email: str, code: str) -> dict:
-    """
-    Шаг 2 регистрации: проверка кода, создание пользователя в users.yaml.
-    Возвращает {"ok": bool, "error": str, "user": dict|None}.
-    """
     email = (email or "").strip().lower()
     code = (code or "").strip()
 
-    pending = _purge_expired(_load_pending())
-    entry = pending.get(email)
-    if not entry:
+    row = _get_pending(email)
+    if not row or float(row["expires"]) <= time.time():
+        if row:
+            _exec("DELETE FROM pending_registrations WHERE email = ?", (email,))
         return {"ok": False, "error": "Код истёк или регистрация не начата. Начните заново."}
-    if code != entry["code"]:
+    if code != row["code"]:
         return {"ok": False, "error": "Неверный код подтверждения."}
 
-    cfg = load_users()
-    username = email  # ключ = почта (уникально)
-    cfg["credentials"]["usernames"][username] = {
-        "email": email,
-        "name": entry["name"],
-        "password": entry["password_hash"],
-        "role": "user",
-        "verified": True,
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    save_users(cfg)
-
-    del pending[email]
-    _save_pending(pending)
-
+    _exec(
+        "INSERT INTO app_users (email, name, password_hash, role, verified, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (email, row["name"], row["password_hash"], "user", 1,
+         time.strftime("%Y-%m-%d %H:%M:%S")),
+    )
+    _exec("DELETE FROM pending_registrations WHERE email = ?", (email,))
     logger.info(f"Зарегистрирован пользователь: {email}")
-    user = cfg["credentials"]["usernames"][username]
-    return {"ok": True, "error": "", "user": {**user, "username": username}}
+
+    user_row = _get_user_row(email)
+    return {"ok": True, "error": "", "user": _row_to_user(user_row)}
 
 
 def resend_code(email: str) -> dict:
-    """Повторно отправляет код для уже начатой регистрации."""
     email = (email or "").strip().lower()
-    pending = _purge_expired(_load_pending())
-    entry = pending.get(email)
-    if not entry:
+    row = _get_pending(email)
+    if not row:
         return {"ok": False, "error": "Регистрация не начата. Заполните форму заново."}
-    entry["expires"] = time.time() + CODE_TTL_SECONDS
-    _save_pending(pending)
+    _exec("UPDATE pending_registrations SET expires = ? WHERE email = ?",
+          (time.time() + CODE_TTL_SECONDS, email))
     if not smtp_configured():
-        return {"ok": True, "error": "", "dev_code": entry["code"]}
+        return {"ok": True, "error": "", "dev_code": row["code"]}
     try:
-        _send_email(email, entry["code"])
+        _send_email(email, row["code"])
         return {"ok": True, "error": "", "dev_code": None}
     except Exception as e:
         return {"ok": False, "error": f"Не удалось отправить письмо: {e}"}
@@ -287,113 +360,72 @@ def resend_code(email: str) -> dict:
 
 # ─── Постоянные сессии («Запомнить меня») ────────────────────────────────────
 
-def _load_sessions() -> dict:
-    if _SESSIONS_FILE.exists():
-        try:
-            with open(_SESSIONS_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
-
-
-def _save_sessions(data: dict) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(_SESSIONS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
 def create_session(email: str, days: int = REMEMBER_DAYS) -> str:
-    """Создаёт токен долгой сессии, возвращает его (для записи в cookie)."""
     email = (email or "").strip().lower()
     token = secrets.token_urlsafe(32)
-    sessions = {t: v for t, v in _load_sessions().items() if v.get("expires", 0) > time.time()}
-    sessions[token] = {"email": email, "expires": time.time() + days * 86400}
-    _save_sessions(sessions)
+    _exec("DELETE FROM user_sessions WHERE expires <= ?", (time.time(),))
+    _exec("INSERT INTO user_sessions (token, email, expires) VALUES (?, ?, ?)",
+          (token, email, time.time() + days * 86400))
     return token
 
 
 def get_session_user(token: str):
-    """По токену cookie возвращает user_dict (с 'username') либо None."""
     if not token:
         return None
-    sessions = _load_sessions()
-    entry = sessions.get(token)
-    if not entry or entry.get("expires", 0) <= time.time():
-        if token in sessions:
-            del sessions[token]
-            _save_sessions(sessions)
+    row = _fetchone("SELECT email, expires FROM user_sessions WHERE token = ?", (token,))
+    if not row or float(row["expires"]) <= time.time():
+        if row:
+            _exec("DELETE FROM user_sessions WHERE token = ?", (token,))
         return None
-    cfg = load_users()
-    key, user = _find_user_by_email(cfg, entry["email"])
-    if not user:
-        return None
-    return {**user, "username": key}
+    user_row = _get_user_row(row["email"])
+    return _row_to_user(user_row) if user_row else None
 
 
 def destroy_session(token: str) -> None:
-    """Удаляет токен сессии (при выходе)."""
     if not token:
         return
-    sessions = _load_sessions()
-    if token in sessions:
-        del sessions[token]
-        _save_sessions(sessions)
+    _exec("DELETE FROM user_sessions WHERE token = ?", (token,))
 
 
 def _destroy_sessions_for_email(email: str) -> None:
-    """Аннулирует все долгие сессии пользователя (например, при удалении/блокировке)."""
-    email = (email or "").strip().lower()
-    sessions = _load_sessions()
-    remaining = {t: v for t, v in sessions.items() if v.get("email") != email}
-    if len(remaining) != len(sessions):
-        _save_sessions(remaining)
+    _exec("DELETE FROM user_sessions WHERE LOWER(email) = ?", ((email or "").strip().lower(),))
 
 
 # ─── Управление пользователями (админ) ───────────────────────────────────────
 
 def list_users() -> list:
-    """Список всех пользователей для отображения (без хэшей паролей)."""
-    cfg = load_users()
-    out = []
-    for key, u in cfg["credentials"]["usernames"].items():
-        out.append({
-            "username": key,
-            "name": u.get("name", ""),
-            "email": u.get("email", ""),
-            "role": u.get("role", "user"),
-            "verified": u.get("verified", True),
-            "created_at": u.get("created_at", ""),
-        })
-    out.sort(key=lambda x: x.get("created_at", ""))
-    return out
+    rows = _fetchall(
+        "SELECT email, name, role, verified, created_at FROM app_users"
+        " ORDER BY created_at"
+    )
+    return [{
+        "username": r["email"],
+        "name": r["name"],
+        "email": r["email"],
+        "role": r["role"],
+        "verified": bool(r["verified"]),
+        "created_at": r["created_at"] or "",
+    } for r in rows]
 
 
 def set_role(email: str, role: str) -> dict:
-    """Меняет роль пользователя (admin/user)."""
     if role not in ("admin", "user"):
         return {"ok": False, "error": "Недопустимая роль."}
-    cfg = load_users()
-    key, user = _find_user_by_email(cfg, email)
-    if not user:
+    if not email_exists(email):
         return {"ok": False, "error": "Пользователь не найден."}
-    user["role"] = role
-    save_users(cfg)
+    _exec("UPDATE app_users SET role = ? WHERE LOWER(email) = ?",
+          (role, (email or "").strip().lower()))
     return {"ok": True, "error": ""}
 
 
 def delete_user(email: str) -> dict:
-    """Удаляет пользователя и его сессии."""
-    cfg = load_users()
-    key, user = _find_user_by_email(cfg, email)
-    if not user:
+    if not email_exists(email):
         return {"ok": False, "error": "Пользователь не найден."}
-    del cfg["credentials"]["usernames"][key]
-    save_users(cfg)
+    _exec("DELETE FROM app_users WHERE LOWER(email) = ?", ((email or "").strip().lower(),))
     _destroy_sessions_for_email(email)
     return {"ok": True, "error": ""}
 
 
 def count_admins() -> int:
-    cfg = load_users()
-    return sum(1 for u in cfg["credentials"]["usernames"].values() if u.get("role") == "admin")
+    row = _fetchone("SELECT COUNT(*) AS n FROM app_users WHERE role = 'admin'")
+    return int(row["n"]) if row else 0
