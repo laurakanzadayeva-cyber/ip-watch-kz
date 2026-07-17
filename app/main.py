@@ -63,11 +63,12 @@ if _auth_cfg:
     import streamlit_authenticator as stauth
     warnings.filterwarnings("ignore")
 
+    _expiry_days = max(int(_auth_cfg["cookie"].get("expiry_days", 30)), 30)
     authenticator = stauth.Authenticate(
         _auth_cfg["credentials"],
         _auth_cfg["cookie"]["name"],
         _auth_cfg["cookie"]["key"],
-        _auth_cfg["cookie"]["expiry_days"],
+        _expiry_days,
     )
 
     # ── Страница входа ────────────────────────────────────────────────────────
@@ -90,9 +91,7 @@ if _auth_cfg:
         st.info("Введите логин и пароль для входа в систему.")
         st.stop()
 
-    # ── Кнопка выхода в сайдбаре ─────────────────────────────────────────────
-    with st.sidebar:
-        authenticator.logout("🚪 Выйти", location="sidebar")
+    # Кнопка выхода рендерится внизу сайдбара — см. основной sidebar-блок ниже
 
 # ─── Инициализация БД ────────────────────────────────────────────────────────
 
@@ -330,9 +329,20 @@ section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
     line-height: 1 !important;
 }
 
-/* Прячем радио-кружки в сайдбаре */
-section[data-testid="stSidebar"] .stRadio label > div:first-child { display: none !important; }
-section[data-testid="stSidebar"] .stRadio label > div:last-child  { padding-left: 0 !important; }
+/* Прячем радио input и кружок — несколько селекторов для разных версий Streamlit */
+section[data-testid="stSidebar"] .stRadio input[type="radio"] {
+    position: absolute !important; width: 0 !important; height: 0 !important;
+    opacity: 0 !important; pointer-events: none !important;
+}
+/* Streamlit 1.30+: кружок — div[aria-hidden="true"] внутри label */
+section[data-testid="stSidebar"] .stRadio label [aria-hidden="true"],
+section[data-testid="stSidebar"] .stRadio label > div:first-child,
+section[data-testid="stSidebar"] .stRadio [data-baseweb="radio"] > div:first-child,
+section[data-testid="stSidebar"] .stRadio label > span:first-child {
+    display: none !important;
+    width: 0 !important; height: 0 !important;
+    overflow: hidden !important; flex: none !important;
+}
 section[data-testid="stSidebar"] .stRadio > label { display: none; }
 section[data-testid="stSidebar"] .stRadio > div {
     display: flex !important;
@@ -347,18 +357,25 @@ section[data-testid="stSidebar"] .stRadio > div > label {
     border-radius: 7px !important;
     cursor: pointer !important;
     font-size: 13px !important;
-    color: rgba(255,255,255,0.62) !important;
+    color: rgba(255,255,255,0.65) !important;
     font-weight: 500 !important;
     transition: background 0.1s !important;
     margin: 0 !important;
     border-left: 3px solid transparent !important;
+    gap: 0 !important;
+}
+/* Текстовый div — убрать лишний отступ слева */
+section[data-testid="stSidebar"] .stRadio > div > label > div:last-child,
+section[data-testid="stSidebar"] .stRadio > div > label > p {
+    padding-left: 0 !important; margin-left: 0 !important;
+    color: inherit !important;
 }
 section[data-testid="stSidebar"] .stRadio > div > label:hover {
     background: rgba(255,255,255,0.07) !important;
-    color: rgba(255,255,255,0.88) !important;
+    color: rgba(255,255,255,0.9) !important;
 }
-section[data-testid="stSidebar"] .stRadio > div > label[data-baseweb="radio"]:has(input:checked),
-section[data-testid="stSidebar"] .stRadio > div > label:has(input[checked]) {
+section[data-testid="stSidebar"] .stRadio > div > label:has(input:checked),
+section[data-testid="stSidebar"] .stRadio > div > label[data-baseweb="radio"]:has(input:checked) {
     background: rgba(59,130,246,0.18) !important;
     color: #fff !important;
     font-weight: 600 !important;
@@ -655,6 +672,16 @@ with st.sidebar:
 «Настройки» → «Управление пользователями» → заполните форму
 и вставьте сгенерированный TOML в Streamlit Secrets.
         """)
+
+    # ── Кнопка выхода внизу сайдбара ─────────────────────────────────────────
+    st.markdown(
+        "<div style='border-top:1px solid rgba(255,255,255,0.08);margin-top:8px;padding-top:8px;'></div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        authenticator.logout("🚪 Выйти", location="sidebar")
+    except NameError:
+        pass
 
 
 # ─── ГЛАВНАЯ ─────────────────────────────────────────────────────────────────
