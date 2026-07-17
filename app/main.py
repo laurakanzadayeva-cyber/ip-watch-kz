@@ -820,7 +820,7 @@ elif page == "📋 Профили мониторинга":
                 object_types = st.multiselect(
                     "Типы объектов",
                     options=["trademark", "well_known"],
-                    default=["trademark", "well_known"],
+                    default=[],
                     format_func=lambda x: OBJECT_TYPE_LABELS.get(x, x),
                 )
                 search_mode = st.selectbox(
@@ -833,7 +833,7 @@ elif page == "📋 Профили мониторинга":
                 sources = st.multiselect(
                     "Источники",
                     options=["kz_registry", "kz_bulletin", "wipo", "madrid"],
-                    default=["kz_registry", "kz_bulletin"],
+                    default=[],
                     format_func=lambda x: SOURCE_LABELS.get(x, x),
                 )
                 nice_classes = st.text_input("Классы МКТУ", value="all", help="'all' — все классы, или через запятую: 9,35,42")
@@ -2115,11 +2115,90 @@ elif page == "⚙️ Настройки":
     for folder in ["data/reports", "data/downloads", "data/screenshots", "data/logs"]:
         st.code(str(base / folder))
 
+    # ── Управление пользователями ─────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 👤 Управление пользователями")
+
+    _current_user = st.session_state.get("username", "")
+    _current_role = st.session_state.get("roles", ["user"])[0] if st.session_state.get("roles") else "user"
+
+    tab_users, tab_pwd = st.tabs(["👥 Пользователи (admin)", "🔑 Сменить пароль"])
+
+    with tab_users:
+        try:
+            _creds = st.secrets["credentials"]["usernames"]
+            st.markdown("**Текущие пользователи:**")
+            for uname, udata in _creds.items():
+                col_u, col_r = st.columns([3, 1])
+                with col_u:
+                    st.write(f"🧑 **{udata.get('name', uname)}** (`{uname}`) — {udata.get('email', '—')}")
+                with col_r:
+                    st.caption(udata.get("role", "user"))
+        except Exception:
+            st.info("Список пользователей доступен только на облачном деплое.")
+
+        st.markdown("---")
+        st.markdown("**Добавить нового пользователя:**")
+        st.caption("Заполните данные — система сгенерирует строку для вставки в Streamlit Secrets.")
+        with st.form("add_user_form"):
+            new_login = st.text_input("Логин (латиница, без пробелов)", placeholder="a.ivanova")
+            new_name  = st.text_input("Имя (отображается в приложении)", placeholder="Айгерим Иванова")
+            new_email = st.text_input("Email", placeholder="a.ivanova@sergekgroup.kz")
+            new_pwd   = st.text_input("Временный пароль", type="password")
+            new_role  = st.selectbox("Роль", ["user", "admin"])
+            if st.form_submit_button("🔐 Сгенерировать запись"):
+                if new_login and new_name and new_pwd:
+                    import bcrypt
+                    hashed = bcrypt.hashpw(new_pwd.encode(), bcrypt.gensalt(12)).decode()
+                    toml_snippet = (
+                        f'\n[credentials.usernames."{new_login}"]\n'
+                        f'email = "{new_email}"\n'
+                        f'name = "{new_name}"\n'
+                        f'password = "{hashed}"\n'
+                        f'role = "{new_role}"\n'
+                    )
+                    st.success("Скопируйте строку ниже и вставьте в Streamlit Secrets → Save:")
+                    st.code(toml_snippet, language="toml")
+                else:
+                    st.error("Заполните логин, имя и пароль.")
+
+    with tab_pwd:
+        st.markdown(f"Вы вошли как **{_current_user}**. Смените пароль:")
+        with st.form("change_pwd_form"):
+            old_pwd  = st.text_input("Текущий пароль", type="password")
+            new_pwd1 = st.text_input("Новый пароль", type="password")
+            new_pwd2 = st.text_input("Повторите новый пароль", type="password")
+            if st.form_submit_button("💾 Сменить пароль"):
+                if not old_pwd or not new_pwd1:
+                    st.error("Заполните все поля.")
+                elif new_pwd1 != new_pwd2:
+                    st.error("Новые пароли не совпадают.")
+                elif len(new_pwd1) < 8:
+                    st.error("Пароль должен быть не менее 8 символов.")
+                else:
+                    try:
+                        import bcrypt
+                        stored = st.secrets["credentials"]["usernames"][_current_user]["password"]
+                        if bcrypt.checkpw(old_pwd.encode(), stored.encode()):
+                            new_hash = bcrypt.hashpw(new_pwd1.encode(), bcrypt.gensalt(12)).decode()
+                            toml_line = f'password = "{new_hash}"'
+                            st.success("Пароль подтверждён. Обновите строку в Streamlit Secrets:")
+                            st.code(
+                                f'[credentials.usernames."{_current_user}"]\n'
+                                f'password = "{new_hash}"',
+                                language="toml",
+                            )
+                            st.caption("Замените только строку password= в своём блоке credentials и нажмите Save.")
+                        else:
+                            st.error("Неверный текущий пароль.")
+                    except Exception as e:
+                        st.error(f"Ошибка: {e}")
+
     st.markdown("### О системе")
     st.info(
-        "**IP Watch KZ** — локальная система мониторинга товарных знаков.\n\n"
-        "MVP v1.0 — реестр и бюллетень Kazpatent.\n"
-        "MVP+ v2.0 — WIPO Global Brand Database, Madrid Monitor, автозапуск по расписанию."
+        "**IP Watch KZ** — система мониторинга товарных знаков Serge Group.\n\n"
+        "v1.0 — реестр и бюллетень Kazpatent.\n"
+        "v2.0 — WIPO Global Brand Database, Madrid Monitor, автозапуск по расписанию."
     )
 
     st.markdown("### Сброс данных")
