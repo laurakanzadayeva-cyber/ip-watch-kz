@@ -546,7 +546,7 @@ if page == "🏠 Главная":
     last_run = conn.execute(
         "SELECT MAX(started_at) AS last FROM search_runs WHERE status='success'"
     ).fetchone()
-    active_profiles = conn.execute(
+    active_profiles_count = conn.execute(
         "SELECT COUNT(*) AS cnt FROM monitoring_profiles WHERE status='active'"
     ).fetchone()["cnt"]
     new_count = conn.execute(
@@ -561,14 +561,55 @@ if page == "🏠 Главная":
     total_marks = conn.execute("SELECT COUNT(*) AS cnt FROM found_marks").fetchone()["cnt"]
     conn.close()
 
-    last_run_str = fmt_date(last_run["last"]) if last_run["last"] else "Проверка не запускалась"
+    last_run_dt = last_run["last"] if last_run else None
+    last_run_str = fmt_date(last_run_dt) if last_run_dt else None
 
-    st.markdown(f"**Последняя проверка:** {last_run_str}")
+    # ── Авто-уведомление если прошло > 24 часов ──
+    need_check = False
+    if last_run_dt:
+        try:
+            from datetime import timezone
+            lr = datetime.fromisoformat(str(last_run_dt).replace("Z", "+00:00"))
+            if lr.tzinfo is None:
+                lr = lr.replace(tzinfo=timezone.utc)
+            age_hours = (datetime.now(timezone.utc) - lr).total_seconds() / 3600
+            if age_hours > 24:
+                need_check = True
+        except Exception:
+            pass
+    else:
+        need_check = True
+
+    col_title, col_btn = st.columns([3, 1])
+    with col_title:
+        if last_run_str:
+            st.markdown(f"**Последняя проверка:** {last_run_str}")
+        else:
+            st.markdown("**Последняя проверка:** не запускалась")
+    with col_btn:
+        run_now = st.button("🔄 Проверить сейчас", type="primary", use_container_width=True)
+
+    if need_check and not run_now:
+        st.warning("⚠️ Прошло более 24 часов с последней проверки. Рекомендуется запустить мониторинг.")
+
+    if run_now:
+        if active_profiles_count == 0:
+            st.warning("Нет активных профилей. Создайте профиль в разделе «Профили мониторинга».")
+        else:
+            from monitor import run_monitoring
+            with st.spinner("Выполняется мониторинг реестра Kazpatent..."):
+                res = run_monitoring()
+            if res.get("errors"):
+                st.error(f"Ошибки при проверке: {res['errors'][0]['error']}")
+            else:
+                st.success(f"✅ Проверка завершена. Найдено: {res['total_found']}, новых: {res['total_new']}.")
+            st.rerun()
+
     st.markdown("---")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.metric("Активных профилей", active_profiles)
+        st.metric("Активных профилей", active_profiles_count)
     with c2:
         st.metric("Всего найдено", total_marks)
     with c3:
@@ -593,7 +634,7 @@ if page == "🏠 Главная":
     st.dataframe(pd.DataFrame(source_data), use_container_width=True, hide_index=True)
 
     if total_marks == 0:
-        st.info("💡 Создайте профиль мониторинга и запустите первую проверку в разделе «Профили мониторинга» и «Запуск проверки».")
+        st.info("💡 Создайте профиль мониторинга и нажмите «Проверить сейчас» для запуска первого мониторинга.")
 
 
 # ─── ЕДИНЫЙ ПОИСК ────────────────────────────────────────────────────────────
