@@ -296,15 +296,15 @@ st.markdown("""
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
 }
-.stApp { background: #F3F4F6; }
+.stApp { background: #F1F5F9; }
 #MainMenu, footer { visibility: hidden; }
 header[data-testid="stHeader"] { display: none !important; }
 .stDeployButton { display: none !important; }
 
-/* ── Сайдбар ────────────────────────────────────────────────────────────── */
+/* ── Сайдбар — тёмно-синий ──────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {
-    background: white !important;
-    border-right: 1px solid #E5E7EB !important;
+    background: #0F1F3D !important;
+    border-right: 1px solid rgba(255,255,255,0.07) !important;
     padding: 0 !important;
 }
 section[data-testid="stSidebar"] > div:first-child {
@@ -312,6 +312,22 @@ section[data-testid="stSidebar"] > div:first-child {
     display: flex;
     flex-direction: column;
     height: 100vh;
+}
+/* Скролл внутри сайдбара */
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    background: #0F1F3D !important;
+}
+
+/* Метки секций навигации */
+.sb-section-label {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    letter-spacing: 1.8px !important;
+    text-transform: uppercase !important;
+    color: rgba(255,255,255,0.28) !important;
+    padding: 14px 16px 4px !important;
+    margin: 0 !important;
+    line-height: 1 !important;
 }
 
 /* Прячем радио-кружки в сайдбаре */
@@ -321,29 +337,83 @@ section[data-testid="stSidebar"] .stRadio > label { display: none; }
 section[data-testid="stSidebar"] .stRadio > div {
     display: flex !important;
     flex-direction: column !important;
-    gap: 2px !important;
-    padding: 8px 12px !important;
+    gap: 1px !important;
+    padding: 4px 10px !important;
 }
 section[data-testid="stSidebar"] .stRadio > div > label {
     display: flex !important;
     align-items: center !important;
-    padding: 9px 12px !important;
-    border-radius: 8px !important;
+    padding: 8px 12px !important;
+    border-radius: 7px !important;
     cursor: pointer !important;
-    font-size: 14px !important;
-    color: #374151 !important;
+    font-size: 13px !important;
+    color: rgba(255,255,255,0.62) !important;
     font-weight: 500 !important;
-    transition: background 0.12s !important;
+    transition: background 0.1s !important;
     margin: 0 !important;
+    border-left: 3px solid transparent !important;
 }
 section[data-testid="stSidebar"] .stRadio > div > label:hover {
-    background: #F9FAFB !important;
+    background: rgba(255,255,255,0.07) !important;
+    color: rgba(255,255,255,0.88) !important;
 }
 section[data-testid="stSidebar"] .stRadio > div > label[data-baseweb="radio"]:has(input:checked),
 section[data-testid="stSidebar"] .stRadio > div > label:has(input[checked]) {
-    background: #EFF6FF !important;
-    color: #2563EB !important;
+    background: rgba(59,130,246,0.18) !important;
+    color: #fff !important;
     font-weight: 600 !important;
+    border-left: 3px solid #3B82F6 !important;
+}
+
+/* Метки секций внутри одного radio-виджета через nth-child */
+section[data-testid="stSidebar"] .stRadio > div > label:nth-child(5) {
+    margin-top: 6px !important;
+}
+section[data-testid="stSidebar"] .stRadio > div > label:nth-child(5)::before {
+    content: 'МОНИТОРИНГ';
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    color: rgba(255,255,255,0.28);
+    text-transform: uppercase;
+    padding: 0 0 8px;
+    margin-bottom: 2px;
+}
+section[data-testid="stSidebar"] .stRadio > div > label:nth-child(9) {
+    margin-top: 6px !important;
+}
+section[data-testid="stSidebar"] .stRadio > div > label:nth-child(9)::before {
+    content: 'БАЗА ЗНАНИЙ';
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    color: rgba(255,255,255,0.28);
+    text-transform: uppercase;
+    padding: 0 0 8px;
+    margin-bottom: 2px;
+}
+
+/* Кнопка Выйти в сайдбаре */
+section[data-testid="stSidebar"] .stButton > button {
+    color: rgba(255,255,255,0.5) !important;
+    border-color: rgba(255,255,255,0.12) !important;
+    background: transparent !important;
+    font-size: 12px !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(255,255,255,0.07) !important;
+    color: rgba(255,255,255,0.8) !important;
+}
+
+/* Popover в сайдбаре */
+section[data-testid="stSidebar"] .stPopover > button {
+    color: rgba(255,255,255,0.5) !important;
+    border-color: rgba(255,255,255,0.12) !important;
+    background: transparent !important;
+    font-size: 12px !important;
+    width: 100% !important;
 }
 
 /* ── Главная область ─────────────────────────────────────────────────────── */
@@ -357,10 +427,10 @@ div[data-testid="stButton"] > button[kind="primary"],
 .stButton > button[kind="primary"] {
     background: #2563EB !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: 8px !important;
     font-weight: 600 !important;
-    font-size: 15px !important;
-    padding: 10px 20px !important;
+    font-size: 14px !important;
+    padding: 9px 18px !important;
     transition: background 0.15s !important;
 }
 div[data-testid="stButton"] > button[kind="primary"]:hover {
@@ -375,7 +445,7 @@ div[data-testid="stButton"] > button[kind="secondary"] {
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea,
 .stSelectbox > div > div {
-    border: 1px solid #E5E7EB !important;
+    border: 1px solid #E2E8F0 !important;
     border-radius: 8px !important;
     font-size: 14px !important;
     background: white !important;
@@ -386,16 +456,38 @@ div[data-testid="stButton"] > button[kind="secondary"] {
     box-shadow: 0 0 0 3px rgba(37,99,235,0.1) !important;
 }
 
-/* ── Бейджи рисков (сохраняем) ───────────────────────────────────────────── */
-.risk-badge-high   { background:#DC2626; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
-.risk-badge-medium { background:#D97706; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
-.risk-badge-low    { background:#059669; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
-.risk-badge-info   { background:#2563EB; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
+/* ── Бейджи рисков ───────────────────────────────────────────────────────── */
+.risk-badge-high   { background:#EF4444; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
+.risk-badge-medium { background:#F59E0B; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
+.risk-badge-low    { background:#10B981; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
+.risk-badge-info   { background:#3B82F6; color:white; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; }
 
-/* ── Метрики ────────────────────────────────────────────────────────────── */
-.metric-card  { background:white; border:1px solid #E5E7EB; border-radius:12px; padding:16px 20px; text-align:center; }
-.metric-value { font-size:30px; font-weight:700; color:#111827; }
-.metric-label { font-size:13px; color:#6B7280; margin-top:4px; }
+/* ── Метрики (новый стиль) ───────────────────────────────────────────────── */
+.mc-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:12px 0 20px; }
+.mc { background:white; border:1px solid #E2E8F0; border-radius:10px; padding:16px 18px; position:relative; overflow:hidden; }
+.mc::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+.mc-blue::before  { background:#3B82F6; }
+.mc-slate::before { background:#94A3B8; }
+.mc-red::before   { background:#EF4444; }
+.mc-amber::before { background:#F59E0B; }
+.mc-green::before { background:#10B981; }
+.mc-label { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:#64748B; margin-bottom:10px; }
+.mc-value { font-size:28px; font-weight:700; color:#0F172A; line-height:1; }
+.mc-sub   { font-size:11px; color:#94A3B8; margin-top:5px; }
+.mc-trend-up   { font-size:11px; color:#EF4444; margin-top:5px; }
+.mc-trend-ok   { font-size:11px; color:#10B981; margin-top:5px; }
+
+/* ── Статус-пиллы ───────────────────────────────────────────────────────── */
+.pill { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+.pill-green  { background:#DCFCE7; color:#166534; }
+.pill-red    { background:#FEE2E2; color:#991B1B; }
+.pill-amber  { background:#FEF3C7; color:#92400E; }
+.pill-blue   { background:#DBEAFE; color:#1E40AF; }
+.pill-slate  { background:#F1F5F9; color:#475569; }
+
+/* ── Заголовки секций ────────────────────────────────────────────────────── */
+.section-header { font-size:16px; font-weight:600; color:#0F172A; margin:0 0 10px; display:flex; align-items:center; justify-content:space-between; }
+.section-link   { font-size:12px; font-weight:500; color:#3B82F6; cursor:pointer; }
 .section-header { font-size:18px; font-weight:600; color:#111827; margin-bottom:8px; padding-bottom:6px; border-bottom:2px solid #E5E7EB; }
 
 /* ── Страница Возражения ─────────────────────────────────────────────────── */
@@ -494,16 +586,22 @@ div[data-testid="stButton"] > button[kind="secondary"] {
 
 with st.sidebar:
     st.markdown("""
-    <div style="padding:20px 16px 14px;border-bottom:1px solid #F3F4F6;">
-        <div style="font-size:19px;font-weight:800;color:#111827;line-height:1.1;letter-spacing:-0.5px;">
-            SERGEK<br><span style="color:#2563EB;">GROUP</span>
+    <div style="padding:20px 16px 16px;border-bottom:1px solid rgba(255,255,255,0.07);">
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;
+                    color:rgba(255,255,255,0.3);text-transform:uppercase;margin-bottom:10px;">
+            Serge Group
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;
-                    background:#EFF6FF;border-radius:8px;padding:8px 10px;">
-            <span style="font-size:18px;">🛡️</span>
-            <span style="font-size:14px;font-weight:600;color:#2563EB;">IP Watch KZ</span>
+        <div style="display:flex;align-items:center;gap:9px;
+                    background:rgba(59,130,246,0.2);border:1px solid rgba(59,130,246,0.3);
+                    border-radius:8px;padding:9px 11px;">
+            <span style="font-size:17px;">⚖️</span>
+            <div>
+                <div style="font-size:14px;font-weight:700;color:#BFDBFE;line-height:1.1;">IP Watch KZ</div>
+                <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">Мониторинг товарных знаков</div>
+            </div>
         </div>
     </div>
+    <p class="sb-section-label">ОСНОВНОЕ</p>
     """, unsafe_allow_html=True)
 
     page = st.radio(
@@ -524,6 +622,8 @@ with st.sidebar:
         ],
         label_visibility="collapsed",
     )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     with st.popover("📖 Инструкция пользователя", use_container_width=True):
         st.markdown("""
@@ -560,7 +660,19 @@ with st.sidebar:
 # ─── ГЛАВНАЯ ─────────────────────────────────────────────────────────────────
 
 if page == "🏠 Главная":
-    st.title("IP Watch KZ — Мониторинг товарных знаков")
+    st.markdown("""
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                margin-bottom:4px;">
+        <div>
+            <div style="font-size:22px;font-weight:700;color:#0F172A;line-height:1.2;">
+                Главная
+            </div>
+            <div style="font-size:13px;color:#64748B;margin-top:3px;">
+                Дашборд мониторинга · IP Watch KZ
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     conn = get_connection()
     last_run = conn.execute(
@@ -603,14 +715,30 @@ if page == "🏠 Главная":
     col_title, col_btn = st.columns([3, 1])
     with col_title:
         if last_run_str:
-            st.markdown(f"**Последняя проверка:** {last_run_str}")
+            st.markdown(
+                f'<div style="font-size:13px;color:#64748B;padding-top:8px;">'
+                f'<span style="display:inline-block;width:7px;height:7px;background:#10B981;'
+                f'border-radius:50%;margin-right:6px;vertical-align:middle;"></span>'
+                f'Последняя проверка: {last_run_str}</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown("**Последняя проверка:** не запускалась")
+            st.markdown(
+                '<div style="font-size:13px;color:#94A3B8;padding-top:8px;">'
+                'Проверка ещё не запускалась</div>',
+                unsafe_allow_html=True,
+            )
     with col_btn:
         run_now = st.button("🔄 Проверить сейчас", type="primary", use_container_width=True)
 
     if need_check and not run_now:
-        st.warning("⚠️ Прошло более 24 часов с последней проверки. Рекомендуется запустить мониторинг.")
+        st.markdown("""
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-left:4px solid #F59E0B;
+                    border-radius:8px;padding:10px 14px;font-size:13px;color:#92400E;
+                    display:flex;align-items:center;gap:8px;margin-top:4px;">
+            ⚠️ Прошло более 24 часов с последней проверки. Рекомендуется запустить мониторинг.
+        </div>
+        """, unsafe_allow_html=True)
 
     if run_now:
         if active_profiles_count == 0:
@@ -625,33 +753,79 @@ if page == "🏠 Главная":
                 st.success(f"✅ Проверка завершена. Найдено: {res['total_found']}, новых: {res['total_new']}.")
             st.rerun()
 
-    st.markdown("---")
+    st.markdown(f"""
+    <div class="mc-grid">
+        <div class="mc mc-blue">
+            <div class="mc-label">Активных профилей</div>
+            <div class="mc-value">{active_profiles_count}</div>
+            <div class="mc-sub">Под наблюдением</div>
+        </div>
+        <div class="mc mc-slate">
+            <div class="mc-label">Всего найдено</div>
+            <div class="mc-value">{total_marks}</div>
+            <div class="mc-sub">Совпадений за всё время</div>
+        </div>
+        <div class="mc mc-red">
+            <div class="mc-label">Высокий риск</div>
+            <div class="mc-value">{high_risk}</div>
+            <div class="mc-sub">Требует немедленного внимания</div>
+        </div>
+        <div class="mc mc-amber">
+            <div class="mc-label">Средний риск</div>
+            <div class="mc-value">{medium_risk}</div>
+            <div class="mc-sub">Под наблюдением</div>
+        </div>
+        <div class="mc mc-green">
+            <div class="mc-label">Не проверено</div>
+            <div class="mc-value">{new_count}</div>
+            <div class="mc-sub">Ожидают правовой оценки</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.metric("Активных профилей", active_profiles_count)
-    with c2:
-        st.metric("Всего найдено", total_marks)
-    with c3:
-        st.metric("🔴 Высокий риск", high_risk)
-    with c4:
-        st.metric("🟠 Средний риск", medium_risk)
-    with c5:
-        st.metric("⏳ Требует проверки", new_count)
-
-    st.markdown("---")
-    st.markdown("### Статус источников")
+    st.markdown('<div class="section-header" style="font-size:15px;font-weight:600;color:#0F172A;margin-bottom:8px;">Статус источников</div>', unsafe_allow_html=True)
 
     sources = get_sources()
-    source_data = []
-    for s in sources:
-        source_data.append({
-            "Источник": s["name"],
-            "Статус": "✅ Активен" if s["status"] == "active" else "⏸️ Отключён",
-            "Последняя проверка": fmt_date(s["last_checked"]),
-            "Ошибка": s["last_error"] or "—",
-        })
-    st.dataframe(pd.DataFrame(source_data), use_container_width=True, hide_index=True)
+    if sources:
+        rows_html = ""
+        for s in sources:
+            if s["status"] == "active":
+                pill = '<span class="pill pill-green">● Активен</span>'
+            else:
+                pill = '<span class="pill pill-slate">⏸ Отключён</span>'
+            err = s["last_error"] or "—"
+            checked = fmt_date(s["last_checked"])
+            rows_html += f"""
+            <tr>
+                <td style="padding:9px 14px;font-size:13px;font-weight:500;color:#0F172A;
+                           border-bottom:1px solid #F1F5F9;">{s['name']}</td>
+                <td style="padding:9px 14px;border-bottom:1px solid #F1F5F9;">{pill}</td>
+                <td style="padding:9px 14px;font-size:13px;color:#64748B;
+                           border-bottom:1px solid #F1F5F9;">{checked}</td>
+                <td style="padding:9px 14px;font-size:13px;color:#94A3B8;
+                           border-bottom:1px solid #F1F5F9;">{err}</td>
+            </tr>"""
+        st.markdown(f"""
+        <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#F8FAFC;">
+                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Источник</th>
+                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Статус</th>
+                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Последняя проверка</th>
+                        <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                                   letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Ошибка</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Источники не настроены.")
 
     if total_marks == 0:
         st.info("💡 Создайте профиль мониторинга и нажмите «Проверить сейчас» для запуска первого мониторинга.")
