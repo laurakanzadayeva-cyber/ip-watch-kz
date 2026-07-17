@@ -809,11 +809,11 @@ elif page == "📋 Профили мониторинга":
     with tab2:
         st.subheader("Новый профиль мониторинга")
         with st.form("create_profile"):
-            name = st.text_input("Название профиля *", placeholder="Например: SERGEK — основной")
-            main_designation = st.text_input("Основное обозначение *", placeholder="Например: SERGEK")
+            name = st.text_input("Название профиля *", placeholder="Мониторинг основного бренда")
+            main_designation = st.text_input("Основное обозначение *", placeholder="Введите обозначение товарного знака")
             variants_raw = st.text_area(
                 "Варианты написания (каждый с новой строки)",
-                placeholder="СЕРГЕК\nSERGEK SYSTEM\nСЕРГЕК СИСТЕМ",
+                placeholder="Кириллическая транслитерация\nСловесный элемент\nСочетание с другими словами",
             )
             col1, col2 = st.columns(2)
             with col1:
