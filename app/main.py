@@ -346,6 +346,19 @@ def kz_today() -> date:
     return kz_now().date()
 
 
+def fmt_datetime_kz(val) -> str:
+    """Форматирует дату-время (в т.ч. ISO/UTC) в казахстанское: «17.07.2026, 23:31 (Алматы)»."""
+    if not val:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(KZ_TZ).strftime("%d.%m.%Y, %H:%M") + " (Алматы)"
+    except (ValueError, TypeError):
+        return str(val)
+
+
 def calc_contestation(reg_date_val):
     """5-летний срок оспаривания ТЗ с даты регистрации (ст. 28 Закона о ТЗ РК)."""
     if not reg_date_val:
@@ -547,8 +560,27 @@ html, body, [class*="css"] {
 }
 .stApp { background: #F1F5F9; }
 #MainMenu, footer { visibility: hidden; }
-header[data-testid="stHeader"] { display: none !important; }
 .stDeployButton { display: none !important; }
+/* Шапку не прячем целиком (в ней кнопка раскрытия сайдбара), делаем прозрачной */
+header[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="stDecoration"] { display: none !important; }
+/* Прячем меню/действия в шапке, но НЕ кнопку раскрытия сайдбара */
+[data-testid="stToolbarActions"], [data-testid="stMainMenuButton"] { display: none !important; }
+/* Заметная кнопка раскрытия свёрнутой боковой панели */
+[data-testid="stExpandSidebarButton"] {
+    display: flex !important;
+    visibility: visible !important;
+    background: #1E3A8A !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 10px rgba(30,58,138,0.4) !important;
+}
+[data-testid="stExpandSidebarButton"] button,
+[data-testid="stExpandSidebarButton"] svg {
+    color: #fff !important;
+    fill: #fff !important;
+    width: 28px !important;
+    height: 28px !important;
+}
 
 /* ── Сайдбар — тёмно-синий ──────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {
@@ -1046,7 +1078,7 @@ if page == "🏠 Главная":
     conn.close()
 
     last_run_dt = last_run["last"] if last_run else None
-    last_run_str = fmt_date(last_run_dt) if last_run_dt else None
+    last_run_str = fmt_datetime_kz(last_run_dt) if last_run_dt else None
 
     # ── Авто-уведомление если прошло > 24 часов ──
     need_check = False
