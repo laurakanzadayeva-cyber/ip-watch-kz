@@ -1,9 +1,8 @@
 """
-Адаптер базы данных: SQLite локально, PostgreSQL (Supabase) в облаке.
+Адаптер базы данных: SQLite локально, Supabase HTTPS в облаке.
 Интерфейс совместим с sqlite3 — остальной код менять не нужно.
 """
 
-import os
 import sqlite3
 
 
@@ -15,86 +14,95 @@ def _is_cloud() -> bool:
         return False
 
 
-def _get_pg_connection():
-    import psycopg2
-    import psycopg2.extras
+def _get_supabase_client():
+    from supabase import create_client
     import streamlit as st
-
-    conn = psycopg2.connect(
-        host=st.secrets["supabase"]["db_host"],
-        port=st.secrets["supabase"]["db_port"],
-        dbname="postgres",
-        user=st.secrets["supabase"]["db_user"],
-        password=st.secrets["supabase"]["db_password"],
-        sslmode="require",
-    )
-    conn.autocommit = False
-    return _PgConnectionWrapper(conn)
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["service_role_key"]
+    return create_client(url, key)
 
 
-class _PgCursorWrapper:
-    """Имитирует sqlite3.Cursor для psycopg2."""
-
-    def __init__(self, cur):
-        self._cur = cur
-
-    def execute(self, sql, params=None):
-        sql = sql.replace("?", "%s")
-        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-        sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
-        sql = sql.replace("DATETIME", "TIMESTAMPTZ")
-        if params:
-            self._cur.execute(sql, params)
+def _interpolate(sql: str, params) -> str:
+    """Подставляет ? placeholders с экранированием значений."""
+    if not params:
+        return sql
+    parts = sql.split("?")
+    result = parts[0]
+    for i, param in enumerate(params):
+        if param is None:
+            result += "NULL"
+        elif isinstance(param, bool):
+            result += "TRUE" if param else "FALSE"
+        elif isinstance(param, (int, float)):
+            result += str(param)
         else:
-            self._cur.execute(sql)
+            result += "'" + str(param).replace("'", "''") + "'"
+        result += parts[i + 1]
+    return result
 
-    def executemany(self, sql, seq):
-        sql = sql.replace("?", "%s")
-        self._cur.executemany(sql, seq)
 
-    def executescript(self, script):
-        # Разбиваем скрипт на отдельные команды
-        script = script.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
-        script = script.replace("INSERT OR IGNORE INTO", "INSERT INTO")
-        script = script.replace("IF NOT EXISTS", "IF NOT EXISTS")
-        script = script.replace("DATETIME", "TIMESTAMPTZ")
-        # ON CONFLICT для INSERT OR IGNORE
+class _SupaCursor:
+    def __init__(self, client):
+        self._client = client
+        self._results = []
+        self._lastrowid = None
+        self.rowcount = 0
+
+    def execute(self, sql: str, params=None):
+        sql = sql.strip()
+        # Конвертируем SQLite-специфичный синтаксис
+        sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
+        sql = sql.replace("DATETIME", "TIMESTAMPTZ")
+        sql_final = _interpolate(sql, params)
+        upper = sql_final.lstrip().upper()
+
+        if upper.startswith("SELECT") or upper.startswith("WITH"):
+            resp = self._client.rpc("run_query", {"sql": sql_final}).execute()
+            self._results = resp.data if resp.data else []
+        elif upper.startswith("PRAGMA") or upper.startswith("--"):
+            self._results = []
+        else:
+            resp = self._client.rpc("run_exec", {"sql": sql_final}).execute()
+            if resp.data:
+                self.rowcount = int(resp.data.get("rowcount") or 0)
+                self._lastrowid = resp.data.get("lastrowid")
+            self._results = []
+
+    def executemany(self, sql: str, seq):
+        for params in seq:
+            self.execute(sql, params)
+
+    def executescript(self, script: str):
+        # На облаке таблицы уже созданы через SQL Editor — пропускаем CREATE
         statements = [s.strip() for s in script.split(";") if s.strip()]
         for stmt in statements:
-            if stmt.upper().startswith("INSERT INTO"):
+            upper = stmt.lstrip().upper()
+            if upper.startswith("CREATE") or upper.startswith("PRAGMA"):
+                continue
+            # Конвертируем INSERT OR IGNORE
+            stmt = stmt.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+            if stmt.lstrip().upper().startswith("INSERT"):
                 stmt += " ON CONFLICT DO NOTHING"
             try:
-                self._cur.execute(stmt)
+                self.execute(stmt)
             except Exception:
                 pass
 
     def fetchone(self):
-        row = self._cur.fetchone()
-        if row is None:
+        if not self._results:
             return None
-        return _PgRow(dict(zip([d[0] for d in self._cur.description], row)))
+        return _SupaRow(self._results[0])
 
     def fetchall(self):
-        rows = self._cur.fetchall()
-        if not rows:
-            return []
-        cols = [d[0] for d in self._cur.description]
-        return [_PgRow(dict(zip(cols, r))) for r in rows]
+        return [_SupaRow(r) for r in self._results]
 
     @property
     def lastrowid(self):
-        try:
-            self._cur.execute("SELECT lastval()")
-            return self._cur.fetchone()[0]
-        except Exception:
-            return None
-
-    @property
-    def rowcount(self):
-        return self._cur.rowcount
+        return self._lastrowid
 
 
-class _PgRow:
+class _SupaRow:
     """Имитирует sqlite3.Row — доступ по имени и индексу."""
 
     def __init__(self, data: dict):
@@ -115,40 +123,41 @@ class _PgRow:
     def get(self, key, default=None):
         return self._data.get(key, default)
 
+    def __repr__(self):
+        return repr(self._data)
 
-class _PgConnectionWrapper:
-    """Имитирует sqlite3.Connection для psycopg2."""
 
-    def __init__(self, conn):
-        self._conn = conn
+class _SupaConnection:
+    """Имитирует sqlite3.Connection для Supabase."""
+
+    def __init__(self, client):
+        self._client = client
 
     def cursor(self):
-        return _PgCursorWrapper(self._conn.cursor())
+        return _SupaCursor(self._client)
 
-    def execute(self, sql, params=None):
+    def execute(self, sql: str, params=None):
         cur = self.cursor()
         cur.execute(sql, params)
         return cur
 
     def commit(self):
-        self._conn.commit()
+        pass  # Supabase — autocommit
 
     def close(self):
-        self._conn.close()
+        pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
-        self._conn.commit()
-        self._conn.close()
+        pass
 
 
 def get_connection():
-    """Возвращает соединение с БД: PostgreSQL в облаке, SQLite локально."""
+    """Возвращает соединение: Supabase в облаке, SQLite локально."""
     if _is_cloud():
-        return _get_pg_connection()
-    # Локально — SQLite как прежде
+        return _SupaConnection(_get_supabase_client())
     from paths import DB_PATH, init_user_dirs
     init_user_dirs()
     conn = sqlite3.connect(str(DB_PATH))
