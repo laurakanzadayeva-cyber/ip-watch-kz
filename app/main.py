@@ -87,20 +87,29 @@ if _auth_required and "auth_user" not in st.session_state:
             _clear_session_cookie()
 
 
+@st.cache_data
+def _logo_data_uri() -> str:
+    """Логотип SERGEK GROUP как data-URI (для встраивания в HTML)."""
+    import base64
+    p = Path(__file__).parent / "assets" / "sergek_logo.png"
+    if not p.exists():
+        return ""
+    return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+
+
 def _render_auth_header():
-    st.markdown("""
+    _logo = _logo_data_uri()
+    _logo_html = (
+        f'<img src="{_logo}" alt="SERGEK GROUP" '
+        f'style="width:280px;max-width:70vw;height:auto;margin-bottom:26px;">'
+        if _logo else
+        '<div style="font-size:36px;font-weight:900;color:#1B2A4A;letter-spacing:3px;'
+        'text-transform:uppercase;margin-bottom:26px;">SERGEK GROUP</div>'
+    )
+    st.markdown(f"""
     <div style="display:flex;flex-direction:column;align-items:center;
                 justify-content:center;gap:0;margin:6vh 0 24px;">
-        <div style="margin-bottom:24px;text-align:center;">
-            <div style="font-size:36px;font-weight:900;color:#1B2A4A;
-                        letter-spacing:3px;font-family:'Segoe UI',Arial,sans-serif;
-                        line-height:1;text-transform:uppercase;">SERGEK</div>
-            <div style="font-size:20px;font-weight:700;color:#2563EB;
-                        letter-spacing:5px;font-family:'Segoe UI',Arial,sans-serif;
-                        text-transform:uppercase;margin-top:2px;">GROUP</div>
-            <div style="width:100%;height:2px;background:linear-gradient(90deg,#2563EB,#93C5FD);
-                        border-radius:2px;margin-top:8px;"></div>
-        </div>
+        {_logo_html}
         <div style="background:#F0F7FF;border:1px solid #BFDBFE;border-radius:12px;
                     padding:14px 28px;text-align:center;">
             <div style="font-size:22px;font-weight:700;color:#1E3A8A;letter-spacing:-0.3px;">
@@ -980,6 +989,22 @@ if page == "🏠 Главная":
             <div style="font-size:13px;color:#64748B;margin-top:3px;">
                 Дашборд мониторинга · IP Watch KZ
             </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _first_name = (_auth_name or "").strip().split()[0] if (_auth_name or "").strip() else ""
+    _greet_name = f", {_first_name}" if _first_name else ""
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#EFF6FF 0%,#F0F7FF 100%);
+                border:1px solid #BFDBFE;border-radius:14px;
+                padding:18px 22px;margin:6px 0 18px;">
+        <div style="font-size:19px;font-weight:700;color:#1E3A8A;">
+            Добро пожаловать{_greet_name}! 👋
+        </div>
+        <div style="font-size:13.5px;color:#475569;margin-top:6px;line-height:1.5;">
+            Управляйте профилями мониторинга, отслеживайте новые совпадения
+            и анализируйте результаты проверок. Желаем продуктивной работы!
         </div>
     </div>
     """, unsafe_allow_html=True)
