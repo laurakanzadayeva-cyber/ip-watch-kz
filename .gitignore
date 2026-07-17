@@ -1,6 +1,7 @@
 # Секретные файлы — НЕ коммитить
 config/credentials.json
 config/users.yaml
+config/pending.json
 
 # Данные и кэш
 data/

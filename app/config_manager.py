@@ -63,6 +63,11 @@ def get_telegram_config() -> dict:
     return creds.get("telegram", {})
 
 
+def get_smtp_config() -> dict:
+    creds = load_credentials()
+    return creds.get("smtp", {})
+
+
 def credentials_configured() -> dict:
     creds = load_credentials()
     return {
