@@ -1,0 +1,33 @@
+# Секретные файлы — НЕ коммитить
+config/credentials.json
+config/users.yaml
+
+# Данные и кэш
+data/
+laws/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Временные файлы сборки
+installer/build_tmp/
+dist/
+build/
+*.spec
+
+# Среды Python
+venv/
+.venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Скомпилированные файлы
+*.exe
+*.docx
+
+# Windows
+Thumbs.db
+desktop.ini
