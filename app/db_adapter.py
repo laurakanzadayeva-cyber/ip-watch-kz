@@ -73,11 +73,28 @@ class _SupaCursor:
         self.rowcount = 0
 
     def execute(self, sql: str, params=None):
+        import re
         sql = sql.strip()
+        # SQLite → PostgreSQL: синтаксические замены
         sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
         sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT",
                           "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
         sql = sql.replace("DATETIME", "TIMESTAMPTZ")
+        # GROUP_CONCAT(col ORDER BY col2) → STRING_AGG(col::text, ',' ORDER BY col2)
+        sql = re.sub(
+            r'GROUP_CONCAT\s*\(\s*(.+?)\s+ORDER\s+BY\s+(.+?)\s*\)',
+            lambda m: (f"STRING_AGG(({m.group(1).strip()})::text,"
+                       f" ',' ORDER BY {m.group(2).strip()})"),
+            sql,
+            flags=re.IGNORECASE,
+        )
+        # GROUP_CONCAT(col) → STRING_AGG(col::text, ',')
+        sql = re.sub(
+            r'GROUP_CONCAT\s*\(\s*(.+?)\s*\)',
+            lambda m: f"STRING_AGG(({m.group(1).strip()})::text, ',')",
+            sql,
+            flags=re.IGNORECASE,
+        )
         sql_final = _interpolate(sql, params)
         upper = sql_final.lstrip().upper()
 
