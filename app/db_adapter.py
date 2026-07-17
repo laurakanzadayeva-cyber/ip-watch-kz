@@ -14,12 +14,29 @@ def _is_cloud() -> bool:
         return False
 
 
-def _get_supabase_client():
-    from supabase import create_client
+def _get_supabase_creds():
     import streamlit as st
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["service_role_key"]
-    return create_client(url, key)
+    url = str(st.secrets["supabase"]["url"]).strip().rstrip("/")
+    key = str(st.secrets["supabase"]["service_role_key"]).strip()
+    return url, key
+
+
+def _rpc(func_name: str, sql: str):
+    import requests
+    url, key = _get_supabase_creds()
+    headers = {
+        "apikey": key,
+        "Authorization": "Bearer " + key,
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(
+        f"{url}/rest/v1/rpc/{func_name}",
+        headers=headers,
+        json={"sql": sql},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _interpolate(sql: str, params) -> str:
@@ -42,31 +59,30 @@ def _interpolate(sql: str, params) -> str:
 
 
 class _SupaCursor:
-    def __init__(self, client):
-        self._client = client
+    def __init__(self):
         self._results = []
         self._lastrowid = None
         self.rowcount = 0
 
     def execute(self, sql: str, params=None):
         sql = sql.strip()
-        # Конвертируем SQLite-специфичный синтаксис
         sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
-        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
+        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT",
+                          "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
         sql = sql.replace("DATETIME", "TIMESTAMPTZ")
         sql_final = _interpolate(sql, params)
         upper = sql_final.lstrip().upper()
 
         if upper.startswith("SELECT") or upper.startswith("WITH"):
-            resp = self._client.rpc("run_query", {"sql": sql_final}).execute()
-            self._results = resp.data if resp.data else []
+            data = _rpc("run_query", sql_final)
+            self._results = data if isinstance(data, list) else []
         elif upper.startswith("PRAGMA") or upper.startswith("--"):
             self._results = []
         else:
-            resp = self._client.rpc("run_exec", {"sql": sql_final}).execute()
-            if resp.data:
-                self.rowcount = int(resp.data.get("rowcount") or 0)
-                self._lastrowid = resp.data.get("lastrowid")
+            data = _rpc("run_exec", sql_final)
+            if isinstance(data, dict):
+                self.rowcount = int(data.get("rowcount") or 0)
+                self._lastrowid = data.get("lastrowid")
             self._results = []
 
     def executemany(self, sql: str, seq):
@@ -74,13 +90,11 @@ class _SupaCursor:
             self.execute(sql, params)
 
     def executescript(self, script: str):
-        # На облаке таблицы уже созданы через SQL Editor — пропускаем CREATE
         statements = [s.strip() for s in script.split(";") if s.strip()]
         for stmt in statements:
             upper = stmt.lstrip().upper()
             if upper.startswith("CREATE") or upper.startswith("PRAGMA"):
                 continue
-            # Конвертируем INSERT OR IGNORE
             stmt = stmt.replace("INSERT OR IGNORE INTO", "INSERT INTO")
             if stmt.lstrip().upper().startswith("INSERT"):
                 stmt += " ON CONFLICT DO NOTHING"
@@ -130,11 +144,8 @@ class _SupaRow:
 class _SupaConnection:
     """Имитирует sqlite3.Connection для Supabase."""
 
-    def __init__(self, client):
-        self._client = client
-
     def cursor(self):
-        return _SupaCursor(self._client)
+        return _SupaCursor()
 
     def execute(self, sql: str, params=None):
         cur = self.cursor()
@@ -142,7 +153,7 @@ class _SupaConnection:
         return cur
 
     def commit(self):
-        pass  # Supabase — autocommit
+        pass
 
     def close(self):
         pass
@@ -157,7 +168,7 @@ class _SupaConnection:
 def get_connection():
     """Возвращает соединение: Supabase в облаке, SQLite локально."""
     if _is_cloud():
-        return _SupaConnection(_get_supabase_client())
+        return _SupaConnection()
     from paths import DB_PATH, init_user_dirs
     init_user_dirs()
     conn = sqlite3.connect(str(DB_PATH))
