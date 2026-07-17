@@ -103,6 +103,18 @@ class _SupaCursor:
             self._results = data if isinstance(data, list) else []
         elif upper.startswith("PRAGMA") or upper.startswith("--"):
             self._results = []
+        elif upper.startswith("INSERT") and "RETURNING" not in upper:
+            # Add RETURNING id to get the inserted row's id
+            sql_returning = sql_final.rstrip().rstrip(";") + " RETURNING id"
+            try:
+                data = _rpc("run_query", sql_returning)
+                if isinstance(data, list) and data:
+                    self._lastrowid = data[0].get("id")
+                    self.rowcount = len(data)
+            except Exception:
+                # Fallback: table may not have id column
+                _rpc("run_exec", sql_final)
+            self._results = []
         else:
             data = _rpc("run_exec", sql_final)
             if isinstance(data, dict):

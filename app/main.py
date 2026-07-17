@@ -1125,7 +1125,7 @@ elif page == "📋 Профили мониторинга":
                     st.error("Заполните обязательные поля: «Название профиля» и «Основное обозначение».")
                 else:
                     with get_connection() as conn:
-                        conn.execute(
+                        cur = conn.execute(
                             """INSERT INTO monitoring_profiles
                                (name, main_designation, object_types, sources, nice_classes,
                                 excluded_owners, search_mode, comment)
@@ -1140,7 +1140,13 @@ elif page == "📋 Профили мониторинга":
                                 comment,
                             ),
                         )
-                        profile_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                        profile_id = cur.lastrowid
+                        if profile_id is None:
+                            row = conn.execute(
+                                "SELECT id FROM monitoring_profiles WHERE name=? ORDER BY id DESC LIMIT 1",
+                                (name,)
+                            ).fetchone()
+                            profile_id = row[0] if row else None
 
                         for variant in variants_raw.strip().splitlines():
                             v = variant.strip()
