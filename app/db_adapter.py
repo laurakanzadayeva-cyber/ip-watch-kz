@@ -15,9 +15,12 @@ def _is_cloud() -> bool:
 
 
 def _get_supabase_creds():
+    import re
     import streamlit as st
     url = str(st.secrets["supabase"]["url"]).strip().rstrip("/")
-    key = str(st.secrets["supabase"]["service_role_key"]).strip()
+    raw = str(st.secrets["supabase"]["service_role_key"])
+    # JWT tokens contain only base64url chars and dots — strip everything else
+    key = re.sub(r"[^A-Za-z0-9\-_=.+/]", "", raw)
     return url, key
 
 
