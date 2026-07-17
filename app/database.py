@@ -142,5 +142,13 @@ def init_db():
         ('madrid', 'Madrid Monitor', 'https://www.wipo.int/madrid/monitor/en/', 'planned');
     """)
 
+    # ── Миграция: владелец записи для изоляции данных между пользователями ──
+    for table in ("monitoring_profiles", "found_marks"):
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN owner_email TEXT")
+            conn.commit()
+        except Exception:
+            pass  # колонка уже существует
+
     conn.commit()
     conn.close()

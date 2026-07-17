@@ -36,6 +36,7 @@ def run_monitoring(
         variants = _load_variants(conn, profile["id"])
         all_designations = [profile["main_designation"]] + [v["variant"] for v in variants]
         profile_name = profile["main_designation"]
+        _profile_owner = profile["owner_email"] if "owner_email" in profile.keys() else None
 
         for source in active_sources:
             run_id = _start_run(conn, profile["id"], source["code"])
@@ -52,7 +53,8 @@ def run_monitoring(
                         if not result["is_match"]:
                             continue
 
-                        is_new = _save_mark(conn, profile["id"], source["code"], candidate, result)
+                        is_new = _save_mark(conn, profile["id"], source["code"], candidate, result,
+                                            _profile_owner)
                         found_count += 1
                         if is_new:
                             new_count += 1
@@ -125,7 +127,8 @@ def _fetch_candidates(source_code: str, designations: list[str]) -> list[dict]:
     return candidates
 
 
-def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_result: dict) -> bool:
+def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_result: dict,
+               owner_email: str | None = None) -> bool:
     existing = conn.execute(
         """SELECT id FROM found_marks
            WHERE profile_id=? AND source_code=? AND designation=?
@@ -152,8 +155,8 @@ def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_r
             application_number, registration_number,
             application_date, registration_date, publication_date,
             owner, owner_address, status_mark, goods_services,
-            source_url, match_reason, risk_level
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            source_url, match_reason, risk_level, owner_email
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             profile_id,
             source_code,
@@ -171,6 +174,7 @@ def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_r
             candidate.get("source_url", ""),
             match_result["reason"],
             match_result["risk_level"],
+            owner_email,
         ),
     )
     mark_id = cur.lastrowid

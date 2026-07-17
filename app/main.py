@@ -373,10 +373,13 @@ def render_mini_calendar():
     # ближайшие сроки (90 дней) — счётчик
     upcoming_cnt = 0
     try:
+        _own = _owner_scope()
+        _own_sql = "" if _own is None else " AND owner_email = ?"
         conn = get_connection()
         rows = conn.execute(
             "SELECT registration_date FROM found_marks "
-            "WHERE registration_date IS NOT NULL AND registration_date != ''"
+            "WHERE registration_date IS NOT NULL AND registration_date != ''" + _own_sql,
+            [] if _own is None else [_own],
         ).fetchall()
         conn.close()
         for r in rows:
@@ -472,9 +475,22 @@ def calc_contestation(reg_date_val):
         return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
 
 
+def _owner_scope():
+    """Email для фильтра «свои данные». None = видит всё (админ или вход отключён)."""
+    u = st.session_state.get("auth_user", {})
+    if not u or u.get("role") == "admin":
+        return None
+    return (u.get("email") or "").strip().lower()
+
+
 def get_profiles():
+    owner = _owner_scope()
     with get_connection() as conn:
-        return conn.execute("SELECT * FROM monitoring_profiles ORDER BY name").fetchall()
+        if owner is None:
+            return conn.execute("SELECT * FROM monitoring_profiles ORDER BY name").fetchall()
+        return conn.execute(
+            "SELECT * FROM monitoring_profiles WHERE owner_email = ? ORDER BY name", (owner,)
+        ).fetchall()
 
 
 def get_sources():
@@ -495,6 +511,11 @@ def get_marks(filters: dict | None = None) -> list:
         """
         conditions = []
         params = []
+
+        owner = _owner_scope()
+        if owner is not None:
+            conditions.append("fm.owner_email = ?")
+            params.append(owner)
 
         if filters:
             if filters.get("source"):
@@ -533,28 +554,34 @@ def get_marks(filters: dict | None = None) -> list:
 
 
 def get_mark_by_id(mark_id: int):
+    owner = _owner_scope()
+    sql = """SELECT fm.*,
+                    (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
+                     FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
+                    mp.name AS profile_name
+             FROM found_marks fm
+             LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
+             WHERE fm.id = ?"""
+    params = [mark_id]
+    if owner is not None:
+        sql += " AND fm.owner_email = ?"
+        params.append(owner)
     with get_connection() as conn:
-        mark = conn.execute(
-            """SELECT fm.*,
-                      (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
-                       FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
-                      mp.name AS profile_name
-               FROM found_marks fm
-               LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
-               WHERE fm.id = ?""",
-            (mark_id,),
-        ).fetchone()
-        return mark
+        return conn.execute(sql, params).fetchone()
 
 
 def get_runs():
+    owner = _owner_scope()
+    sql = ("""SELECT sr.*, mp.name AS profile_name
+              FROM search_runs sr
+              LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id""")
+    params = []
+    if owner is not None:
+        sql += " WHERE mp.owner_email = ?"
+        params.append(owner)
+    sql += " ORDER BY sr.started_at DESC LIMIT 200"
     with get_connection() as conn:
-        return conn.execute(
-            """SELECT sr.*, mp.name AS profile_name
-               FROM search_runs sr
-               LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id
-               ORDER BY sr.started_at DESC LIMIT 200""",
-        ).fetchall()
+        return conn.execute(sql, params).fetchall()
 
 
 def update_mark(mark_id: int, **kwargs):
@@ -1133,22 +1160,39 @@ if page == "🏠 Главная":
     """, unsafe_allow_html=True)
 
     conn = get_connection()
+    _own = _owner_scope()
+    # фильтры владельца для метрик (админ/без входа → без фильтра)
+    _fm_own = "" if _own is None else " AND fm.owner_email = ?"
+    _fm_own_p = [] if _own is None else [_own]
+    _pf_own = "" if _own is None else " AND mp.owner_email = ?"
+    _pf_own_p = [] if _own is None else [_own]
+    _sr_own = "" if _own is None else (
+        " AND sr.profile_id IN (SELECT id FROM monitoring_profiles WHERE owner_email = ?)")
+    _sr_own_p = [] if _own is None else [_own]
+
     last_run = conn.execute(
-        "SELECT MAX(started_at) AS last FROM search_runs WHERE status='success'"
+        "SELECT MAX(sr.started_at) AS last FROM search_runs sr "
+        "WHERE sr.status='success'" + _sr_own, _sr_own_p
     ).fetchone()
     active_profiles_count = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM monitoring_profiles WHERE status='active'"
+        "SELECT COUNT(*) AS cnt FROM monitoring_profiles mp WHERE mp.status='active'" + _pf_own,
+        _pf_own_p
     ).fetchone()["cnt"]
     new_count = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM found_marks WHERE legal_status='not_reviewed'"
+        "SELECT COUNT(*) AS cnt FROM found_marks fm WHERE fm.legal_status='not_reviewed'" + _fm_own,
+        _fm_own_p
     ).fetchone()["cnt"]
     high_risk = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM found_marks WHERE risk_level='high'"
+        "SELECT COUNT(*) AS cnt FROM found_marks fm WHERE fm.risk_level='high'" + _fm_own,
+        _fm_own_p
     ).fetchone()["cnt"]
     medium_risk = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM found_marks WHERE risk_level='medium'"
+        "SELECT COUNT(*) AS cnt FROM found_marks fm WHERE fm.risk_level='medium'" + _fm_own,
+        _fm_own_p
     ).fetchone()["cnt"]
-    total_marks = conn.execute("SELECT COUNT(*) AS cnt FROM found_marks").fetchone()["cnt"]
+    total_marks = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM found_marks fm WHERE 1=1" + _fm_own, _fm_own_p
+    ).fetchone()["cnt"]
     conn.close()
 
     last_run_dt = last_run["last"] if last_run else None
@@ -1522,8 +1566,8 @@ elif page == "📋 Профили мониторинга":
                         cur = conn.execute(
                             """INSERT INTO monitoring_profiles
                                (name, main_designation, object_types, sources, nice_classes,
-                                excluded_owners, search_mode, comment)
-                               VALUES (?,?,?,?,?,?,?,?)""",
+                                excluded_owners, search_mode, comment, owner_email)
+                               VALUES (?,?,?,?,?,?,?,?,?)""",
                             (
                                 name, main_designation,
                                 ",".join(object_types),
@@ -1532,6 +1576,7 @@ elif page == "📋 Профили мониторинга":
                                 excluded_owners,
                                 search_mode,
                                 comment,
+                                (_current_user.get("email") or "").strip().lower() or None,
                             ),
                         )
                         profile_id = cur.lastrowid
@@ -1769,8 +1814,8 @@ elif page == "📊 Результаты":
                                (profile_id, source_code, designation, object_type,
                                 registration_number, registration_date, application_date,
                                 owner, owner_address, goods_services, source_url,
-                                match_reason, risk_level, legal_status, include_in_report)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'not_reviewed',1)""",
+                                match_reason, risk_level, legal_status, include_in_report, owner_email)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'not_reviewed',1,?)""",
                             (
                                 int(m_profile) if m_profile else None,
                                 m_source,
@@ -1785,6 +1830,7 @@ elif page == "📊 Результаты":
                                 m_url or None,
                                 m_reason or "Добавлено вручную",
                                 m_risk,
+                                (_current_user.get("email") or "").strip().lower() or None,
                             ),
                         )
                         new_id = cur2.lastrowid
@@ -3419,11 +3465,14 @@ elif page == "📅 Календарь":
     # ── Сроки оспаривания (рег. дата + 5 лет) из найденных знаков ─────────────
     _deadlines = {}  # date -> list[{name, status}]
     try:
+        _own = _owner_scope()
+        _own_sql = "" if _own is None else " AND owner_email = ?"
         conn = get_connection()
         rows = conn.execute(
             "SELECT designation, registration_number, registration_date "
             "FROM found_marks WHERE registration_date IS NOT NULL "
-            "AND registration_date != ''"
+            "AND registration_date != ''" + _own_sql,
+            [] if _own is None else [_own],
         ).fetchall()
         conn.close()
         for r in rows:
