@@ -1524,17 +1524,24 @@ elif page == "⚖️ Мониторинг законодательства":
 # ─── ПРАВОВАЯ БАЗА ────────────────────────────────────────────────────────────
 
 elif page == "📚 Правовая база":
-    st.title("Правовая база: ИС в Казахстане")
-    st.markdown("Обучающий раздел: законодательство, ключевые понятия, процедуры.")
+    st.markdown("""
+    <div style="margin-bottom:16px;">
+        <div style="font-size:22px;font-weight:700;color:#0F172A;">Правовая база</div>
+        <div style="font-size:13px;color:#64748B;margin-top:3px;">
+            Законодательство Казахстана в сфере ИС · актуальность · понятия · процедуры
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     from legal_base import (
         get_legal_acts_list, get_all_concepts, search_legal_base,
         LEGAL_ACTS, CONCEPTS
     )
 
-    tab_search, tab_core, tab_codes, tab_ip, tab_intl, tab_sub, tab_concepts, tab_download = st.tabs([
+    tab_search, tab_core, tab_actual, tab_codes, tab_ip, tab_intl, tab_sub, tab_concepts, tab_download = st.tabs([
         "🔍 Поиск",
         "📂 Основные документы",
+        "🔄 Актуальность",
         "📋 Кодексная база",
         "⚖️ Законы ИС",
         "🌐 Международные договоры",
@@ -1619,6 +1626,121 @@ elif page == "📚 Правовая база":
                             st.rerun()
                 else:
                     st.warning("Файл не найден в репозитории.")
+
+    with tab_actual:
+        from actuality_checker import CORE_DOC_REGISTRY, check_doc, check_all_docs
+
+        st.markdown("""
+        <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-left:4px solid #3B82F6;
+                    border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1E3A8A;">
+            <strong>Мониторинг актуальности законодательства</strong><br>
+            Система проверяет наличие изменений в документах по данным Adilet (adilet.zan.kz).
+            Для скачивания актуальных редакций используйте вкладку «Скачать законы» (Параграф).
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Инициализация хранилища результатов в session_state
+        if "actuality_results" not in st.session_state:
+            st.session_state.actuality_results = {}
+
+        col_act1, col_act2 = st.columns([4, 1])
+        with col_act2:
+            check_all = st.button("🔄 Проверить все", type="primary", use_container_width=True,
+                                  help="Проверяет актуальность всех документов на Adilet (~30-60 сек)")
+        with col_act1:
+            st.markdown(
+                '<div style="font-size:13px;color:#64748B;padding-top:8px;">'
+                f'Документов в реестре: {len(CORE_DOC_REGISTRY)}</div>',
+                unsafe_allow_html=True,
+            )
+
+        if check_all:
+            results_list = []
+            prog_bar = st.progress(0, "Проверка документов на Adilet...")
+            total = len(CORE_DOC_REGISTRY)
+            for i, key in enumerate(CORE_DOC_REGISTRY):
+                prog_bar.progress((i + 1) / total, f"[{i+1}/{total}] {CORE_DOC_REGISTRY[key]['title'][:50]}...")
+                res = check_doc(key)
+                res["key"] = key
+                results_list.append(res)
+                st.session_state.actuality_results[key] = res
+            prog_bar.empty()
+            st.success(f"Проверка завершена. Обработано документов: {total}.")
+
+        # Отображение результатов по категориям
+        STATUS_PILL = {
+            "current":      ('<span style="background:#DCFCE7;color:#166534;padding:2px 10px;'
+                             'border-radius:12px;font-size:11px;font-weight:700;">✓ Актуален</span>'),
+            "amended":      ('<span style="background:#FEF3C7;color:#92400E;padding:2px 10px;'
+                             'border-radius:12px;font-size:11px;font-weight:700;">⚠ Изменён</span>'),
+            "amended_new":  ('<span style="background:#FEE2E2;color:#991B1B;padding:2px 10px;'
+                             'border-radius:12px;font-size:11px;font-weight:700;">🔴 Новые изменения</span>'),
+            "revoked":      ('<span style="background:#F1F5F9;color:#475569;padding:2px 10px;'
+                             'border-radius:12px;font-size:11px;font-weight:700;">✗ Утратил силу</span>'),
+            "error":        ('<span style="background:#F1F5F9;color:#94A3B8;padding:2px 10px;'
+                             'border-radius:12px;font-size:11px;font-weight:700;">— Нет данных</span>'),
+        }
+
+        CATEGORIES_ORDER = ["Законы ИС", "Кодексы", "Международные договоры", "Судебная практика", "Подзаконные акты"]
+
+        by_cat: dict = {}
+        for key, meta in CORE_DOC_REGISTRY.items():
+            cat = meta["category"]
+            by_cat.setdefault(cat, []).append((key, meta))
+
+        for cat in CATEGORIES_ORDER:
+            if cat not in by_cat:
+                continue
+            st.markdown(f"**{cat}**")
+            rows_html = ""
+            for key, meta in by_cat[cat]:
+                cached = st.session_state.actuality_results.get(key)
+                status = cached["status"] if cached else "error"
+                pill = STATUS_PILL.get(status, STATUS_PILL["error"])
+                last_mod = cached.get("last_modified", "—") if cached else "—"
+                checked_at = cached.get("checked_at", "—") if cached else "—"
+                notes = cached.get("notes") or cached.get("error", "") if cached else "Нажмите «Проверить все»"
+                adilet_url = meta["adilet_url"]
+                prg_id = meta.get("prg_doc_id")
+                prg_link = (
+                    f'<a href="https://online.prg.kz/lawyer/doc/{prg_id}" target="_blank" '
+                    f'style="color:#3B82F6;font-size:11px;text-decoration:none;">Параграф ↗</a>'
+                    if prg_id else ""
+                )
+                rows_html += f"""
+                <tr>
+                    <td style="padding:9px 12px;font-size:13px;color:#0F172A;border-bottom:1px solid #F1F5F9;">
+                        <a href="{adilet_url}" target="_blank"
+                           style="color:#0F172A;text-decoration:none;font-weight:500;">{meta['title']}</a>
+                    </td>
+                    <td style="padding:9px 12px;border-bottom:1px solid #F1F5F9;">{pill}</td>
+                    <td style="padding:9px 12px;font-size:12px;color:#64748B;border-bottom:1px solid #F1F5F9;">{last_mod}</td>
+                    <td style="padding:9px 12px;font-size:11px;color:#94A3B8;border-bottom:1px solid #F1F5F9;max-width:200px;">{notes[:80]}</td>
+                    <td style="padding:9px 12px;font-size:11px;color:#94A3B8;border-bottom:1px solid #F1F5F9;">
+                        <a href="{adilet_url}" target="_blank" style="color:#3B82F6;text-decoration:none;">Adilet ↗</a>
+                        {'&nbsp;&nbsp;' + prg_link if prg_link else ''}
+                    </td>
+                </tr>"""
+
+            st.markdown(f"""
+            <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;margin-bottom:16px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#F8FAFC;">
+                            <th style="padding:7px 12px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Документ</th>
+                            <th style="padding:7px 12px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Статус</th>
+                            <th style="padding:7px 12px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Изменён</th>
+                            <th style="padding:7px 12px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Примечание</th>
+                            <th style="padding:7px 12px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#64748B;">Ссылки</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+            </div>
+            """, unsafe_allow_html=True)
+
+        if not st.session_state.actuality_results:
+            st.info("Нажмите «🔄 Проверить все» для проверки актуальности документов на Adilet.")
 
     def _render_acts(acts):
         for act in acts:
