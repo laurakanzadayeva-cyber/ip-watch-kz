@@ -146,7 +146,7 @@ def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_r
         )
         return False
 
-    conn.execute(
+    cur = conn.execute(
         """INSERT INTO found_marks (
             profile_id, source_code, designation, object_type,
             application_number, registration_number,
@@ -173,7 +173,13 @@ def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_r
             match_result["risk_level"],
         ),
     )
-    mark_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    mark_id = cur.lastrowid
+    if mark_id is None:
+        row = conn.execute(
+            "SELECT id FROM found_marks WHERE designation=? AND source_code=? ORDER BY id DESC LIMIT 1",
+            (candidate["designation"], source_code),
+        ).fetchone()
+        mark_id = row[0] if row else None
 
     for cls in candidate.get("nice_classes", []):
         conn.execute(
@@ -185,12 +191,19 @@ def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_r
 
 
 def _start_run(conn, profile_id, source_code) -> int:
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO search_runs (profile_id, source_code, status) VALUES (?,?,?)",
         (profile_id, source_code, "running"),
     )
     conn.commit()
-    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    run_id = cur.lastrowid
+    if run_id is None:
+        row = conn.execute(
+            "SELECT id FROM search_runs WHERE profile_id=? AND source_code=? ORDER BY id DESC LIMIT 1",
+            (profile_id, source_code),
+        ).fetchone()
+        run_id = row[0] if row else 0
+    return run_id
 
 
 def _finish_run(conn, run_id, status, found, new_count, error=None):
