@@ -38,7 +38,12 @@ def _rpc(func_name: str, sql: str):
         json={"sql": sql},
         timeout=30,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text[:300]
+        raise RuntimeError(f"Supabase {resp.status_code} при вызове {func_name}: {detail}")
     return resp.json()
 
 
