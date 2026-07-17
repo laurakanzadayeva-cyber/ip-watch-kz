@@ -1358,8 +1358,9 @@ elif page == "📚 Правовая база":
         LEGAL_ACTS, CONCEPTS
     )
 
-    tab_search, tab_codes, tab_ip, tab_intl, tab_sub, tab_concepts, tab_download = st.tabs([
+    tab_search, tab_core, tab_codes, tab_ip, tab_intl, tab_sub, tab_concepts, tab_download = st.tabs([
         "🔍 Поиск",
+        "📂 Основные документы",
         "📋 Кодексная база",
         "⚖️ Законы ИС",
         "🌐 Международные договоры",
@@ -1389,6 +1390,61 @@ elif page == "📚 Правовая база":
                             st.markdown(r["content"])
             else:
                 st.info("Ничего не найдено. Попробуйте другой запрос.")
+
+    with tab_core:
+        st.markdown("### Основные документы правовой базы ИС")
+        st.caption("Полные тексты законов и международных договоров. Нажмите на документ для просмотра текста.")
+
+        CORE_DOCS = [
+            ("ГК_РК_Общая_часть.docx",                   "Гражданский кодекс РК — Общая часть (1994)"),
+            ("ГК_РК_Особенная_часть.docx",               "Гражданский кодекс РК — Особенная часть (1999)"),
+            ("Закон_о_товарных_знаках.docx",             "Закон РК «О товарных знаках, знаках обслуживания, географических указаниях» (1999)"),
+            ("Закон_об_авторском_праве.docx",            "Закон РК «Об авторском праве и смежных правах» (1996)"),
+            ("НП_ВС_РК_2007_N11_авторское_право.docx",  "Нормативное постановление ВС РК № 11 от 25.12.2007 о защите авторского права"),
+            ("Бернская_конвенция.docx",                  "Бернская конвенция об охране литературных и художественных произведений (1971)"),
+            ("ТРИПС.docx",                               "Соглашение ТРИПС (TRIPS) — торговые аспекты прав ИС (Марракеш, 1994)"),
+            ("ЕАЭС_Приложение26_ИС.docx",               "ЕАЭС — Приложение № 26: Протокол об охране и защите прав на объекты ИС"),
+            ("Всемирная_конвенция_авторское_право_1952.docx", "Всемирная конвенция об авторском праве (Женева, 1952)"),
+            ("ВОИС_WCT.docx",                            "Договор ВОИС по авторскому праву — WCT (WIPO Copyright Treaty)"),
+        ]
+
+        _core_dir = Path(__file__).parent.parent / "laws" / "core_docs"
+
+        def _extract_docx_text(path: Path) -> str:
+            try:
+                from docx import Document
+                doc = Document(str(path))
+                return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except Exception as e:
+                return f"Ошибка чтения файла: {e}"
+
+        for fname, title in CORE_DOCS:
+            fpath = _core_dir / fname
+            exists = fpath.exists()
+            icon = "📄" if exists else "⚠️"
+            with st.expander(f"{icon} {title}"):
+                if exists:
+                    col_d1, col_d2 = st.columns([1, 3])
+                    with col_d1:
+                        with open(fpath, "rb") as _f:
+                            st.download_button(
+                                "⬇️ Скачать .docx",
+                                data=_f.read(),
+                                file_name=fname,
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"dl_{fname}",
+                            )
+                    with col_d2:
+                        if st.button("📖 Показать текст", key=f"show_{fname}"):
+                            st.session_state[f"txt_{fname}"] = True
+                    if st.session_state.get(f"txt_{fname}"):
+                        text = _extract_docx_text(fpath)
+                        st.text_area("Текст документа", value=text, height=500, key=f"ta_{fname}")
+                        if st.button("Скрыть текст", key=f"hide_{fname}"):
+                            st.session_state[f"txt_{fname}"] = False
+                            st.rerun()
+                else:
+                    st.warning("Файл не найден в репозитории.")
 
     def _render_acts(acts):
         for act in acts:

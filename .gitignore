@@ -4,7 +4,8 @@ config/users.yaml
 
 # Данные и кэш
 data/
-laws/
+laws/*
+!laws/core_docs/
 __pycache__/
 *.pyc
 *.pyo
@@ -26,7 +27,6 @@ env/
 
 # Скомпилированные файлы
 *.exe
-*.docx
 
 # Windows
 Thumbs.db
