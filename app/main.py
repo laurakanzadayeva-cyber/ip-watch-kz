@@ -787,6 +787,14 @@ section[data-testid="stSidebar"] .stButton > button {
     box-shadow: none !important;
     transition: background .1s, color .1s !important;
 }
+/* Внутренний контейнер/текст кнопки — тоже влево */
+section[data-testid="stSidebar"] .stButton > button > div,
+section[data-testid="stSidebar"] .stButton > button p {
+    width: 100% !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    margin: 0 !important;
+}
 section[data-testid="stSidebar"] .stButton > button:hover {
     background: rgba(255,255,255,0.07) !important;
     color: #fff !important;
@@ -798,6 +806,22 @@ section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-pr
     color: #fff !important;
     border-left: 3px solid #3B82F6 !important;
     font-weight: 600 !important;
+}
+/* Кнопки-поповеры (Руководство, Меню пользователя) — под стиль тёмного меню */
+section[data-testid="stSidebar"] [data-testid="stPopover"] button {
+    width: 100% !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    background: rgba(255,255,255,0.06) !important;
+    color: rgba(255,255,255,0.78) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 8px !important;
+    font-size: 13px !important;
+    box-shadow: none !important;
+}
+section[data-testid="stSidebar"] [data-testid="stPopover"] button:hover {
+    background: rgba(255,255,255,0.12) !important;
+    color: #fff !important;
 }
 /* Уплотняем вертикальные отступы между кнопками меню */
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 2px !important; }
