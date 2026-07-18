@@ -1229,7 +1229,7 @@ if page == "🏠 Главная":
         "FROM found_marks fm WHERE fm.registration_date IS NOT NULL AND fm.registration_date != ''" + _fmw,
         _fmp).fetchall()
     _runrows = conn.execute(
-        "SELECT sr.started_at AS t, sr.status AS s, mp.name AS pn "
+        "SELECT sr.started_at AS started, sr.status AS s, mp.name AS pn "
         "FROM search_runs sr LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id "
         "WHERE 1=1" + _srw + " ORDER BY sr.started_at DESC LIMIT 5", _srp).fetchall()
     conn.close()
@@ -1486,7 +1486,7 @@ if page == "🏠 Главная":
         st.markdown('<div class="section-header" style="margin-top:18px;">Лента активности <span class="section-link">Смотреть все →</span></div>', unsafe_allow_html=True)
         _acts = []
         for r in _runrows:
-            dt = _parse_dt(r["t"])
+            dt = _parse_dt(r["started"])
             _acts.append((dt, "✅", "Проверка завершена" if r["s"] == "success" else "Проверка",
                           r["pn"] or "Все профили"))
         for r in _recent[:3]:
