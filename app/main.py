@@ -31,14 +31,23 @@ st.set_page_config(
 # ─── Авторизация ─────────────────────────────────────────────────────────────
 
 import auth as _auth
+import activity as _activity
 import extra_streamlit_components as stx
 from datetime import timedelta
 
-# Создаём таблицы авторизации и переносим старых пользователей (один раз за сессию).
+# Создаём таблицы авторизации/журнала и переносим старых пользователей (раз за сессию).
 # Должно выполниться ДО экрана входа, который читает эти таблицы.
 if not st.session_state.get("_auth_schema_ready"):
     _auth.ensure_auth_schema()
+    _activity.ensure_events_schema()
     st.session_state["_auth_schema_ready"] = True
+
+
+def _log(event_type, title="", detail=""):
+    """Пишет событие от имени текущего пользователя."""
+    u = st.session_state.get("auth_user", {})
+    _activity.log_event(event_type, title, detail,
+                        user_email=u.get("email", ""), owner_email=u.get("email", ""))
 
 # Проверяем флаг открытого доступа (auth_required = false в st.secrets отключает вход)
 _auth_required = True
@@ -1295,17 +1304,22 @@ if page == "🏠 Главная":
     with _t2:
         _n1, _n2 = st.columns([1, 2.4])
         with _n1:
-            with st.popover("🔔", use_container_width=True):
+            _notif = _activity.get_events(
+                owner_email=_own, limit=6,
+                types=["check_completed", "mark_found", "report_exported",
+                       "profile_created", "deadline_changed"])
+            _notif_n = len(_notif)
+            with st.popover(f"🔔 {_notif_n}" if _notif_n else "🔔", use_container_width=True):
                 st.markdown("**Уведомления**")
-                _notes = []
-                if last_dt:
-                    _notes.append(("✅", "Проверка завершена", fmt_datetime_kz(last_dt)))
-                for r in _recent[:3]:
-                    _notes.append(("🔎", f"Новое совпадение: {r['d']}", ""))
-                if not _notes:
+                if not _notif:
                     st.caption("Пока нет уведомлений.")
-                for ic, txt, sub in _notes[:6]:
-                    st.markdown(f"{ic} {txt}" + (f"  \n<span style='color:#94A3B8;font-size:11px;'>{sub}</span>" if sub else ""), unsafe_allow_html=True)
+                for ev in _notif:
+                    _edt = _parse_dt(ev["created_at"])
+                    _sub = ev["detail"] or (_edt.strftime("%d.%m %H:%M") if _edt else "")
+                    st.markdown(
+                        f"{ev['icon']} {ev['title']}"
+                        + (f"  \n<span style='color:#94A3B8;font-size:11px;'>{_sub}</span>" if _sub else ""),
+                        unsafe_allow_html=True)
         with _n2:
             with st.popover("⬇️ Экспорт отчёта", use_container_width=True):
                 st.markdown("**Формат отчёта**")
@@ -1362,6 +1376,7 @@ if page == "🏠 Главная":
                 st.error(f"Ошибки при проверке: {res['errors'][0]['error']}")
             else:
                 st.success(f"✅ Проверка завершена. Найдено: {res['total_found']}, новых: {res['total_new']}.")
+            _log("check_completed", detail=f"Найдено: {res.get('total_found', 0)}, новых: {res.get('total_new', 0)}")
             st.rerun()
 
     # ── Основная сетка: центр + правая панель ─────────────────────────────────
@@ -1522,28 +1537,21 @@ if page == "🏠 Главная":
                 </table>
                 """, unsafe_allow_html=True)
 
-        # Лента активности
+        # Лента активности (из журнала событий)
         st.markdown('<div class="section-header" style="margin-top:18px;">Лента активности <span class="section-link">Смотреть все →</span></div>', unsafe_allow_html=True)
-        _acts = []
-        for r in _runrows:
-            dt = _parse_dt(r["started"])
-            _acts.append((dt, "✅", "Проверка завершена" if r["s"] == "success" else "Проверка",
-                          r["pn"] or "Все профили"))
-        for r in _recent[:3]:
-            dt = _parse_dt(r["ff"])
-            _acts.append((dt, "🔎", "Найден товарный знак", r["d"]))
-        _acts = [a for a in _acts if a[0]]
-        _acts.sort(key=lambda x: x[0], reverse=True)
+        _events = _activity.get_events(owner_email=_own, limit=6)
         _act_html = ""
-        for dt, ic, ttl, sub in _acts[:6]:
+        for ev in _events:
+            _dt = _parse_dt(ev["created_at"])
+            _tstr = _dt.strftime("%d.%m %H:%M") if _dt else ""
             _act_html += (
                 f"<div style='display:flex;gap:12px;align-items:flex-start;padding:9px 0;"
                 f"border-bottom:1px solid #F1F5F9;'>"
-                f"<div style='font-size:15px;'>{ic}</div>"
+                f"<div style='font-size:15px;'>{ev['icon']}</div>"
                 f"<div style='flex:1;'>"
-                f"<div style='font-size:13px;font-weight:600;color:#0F172A;'>{ttl}</div>"
-                f"<div style='font-size:11.5px;color:#94A3B8;margin-top:1px;'>{sub}</div></div>"
-                f"<div style='font-size:11px;color:#94A3B8;white-space:nowrap;'>{dt:%d.%m %H:%M}</div></div>")
+                f"<div style='font-size:13px;font-weight:600;color:#0F172A;'>{ev['title']}</div>"
+                f"<div style='font-size:11.5px;color:#94A3B8;margin-top:1px;'>{ev['detail']}</div></div>"
+                f"<div style='font-size:11px;color:#94A3B8;white-space:nowrap;'>{_tstr}</div></div>")
         if not _act_html:
             _act_html = "<div style='font-size:12px;color:#94A3B8;padding:6px 0;'>Пока нет событий</div>"
         st.markdown(f'<div class="card">{_act_html}</div>', unsafe_allow_html=True)
@@ -1714,6 +1722,7 @@ elif page == "📋 Профили мониторинга":
                                 conn.execute("DELETE FROM monitoring_profiles WHERE id=?", (pid,))
                                 conn.execute("PRAGMA foreign_keys = ON")
                                 conn.commit()
+                            _log("profile_deleted", detail=p["name"])
                             st.rerun()
 
     with tab2:
@@ -1811,6 +1820,7 @@ elif page == "📋 Профили мониторинга":
                         conn.commit()
                     auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_variants(main_designation))}." if _auto_variants(main_designation) else ""
                     st.success(f"Профиль «{name}» создан.{auto_msg}")
+                    _log("profile_created", detail=name)
                     st.rerun()
 
 
@@ -2059,6 +2069,7 @@ elif page == "📊 Результаты":
                                     pass
                         conn.commit()
                     st.success(f"Знак «{m_designation}» добавлен.")
+                    _log("mark_found", "Добавлен товарный знак", detail=m_designation)
                     st.rerun()
 
     # Фильтр «Только оспариваемые» — применяется на стороне Python
@@ -2880,6 +2891,7 @@ elif page == "📝 Отчёты":
                 sources=source_list,
             )
             st.success(f"Отчёт сформирован: `{path}`")
+            _log("report_exported", detail=Path(path).name)
             with open(path, "rb") as f:
                 st.download_button(
                     "⬇️ Скачать отчёт",
@@ -2896,23 +2908,40 @@ elif page == "📝 Отчёты":
 elif page == "📖 Журнал действий":
     st.title("Журнал действий")
 
-    runs = get_runs()
-    if not runs:
-        st.info("Проверки ещё не запускались.")
-    else:
-        run_data = []
-        for r in runs:
-            run_data.append({
-                "Дата/время": fmt_date(r["started_at"]),
-                "Источник": SOURCE_LABELS.get(r["source_code"], r["source_code"]),
-                "Профиль": r["profile_name"] or "—",
-                "Статус": "✅ Успешно" if r["status"] == "success" else ("⏳ Выполняется" if r["status"] == "running" else "❌ Ошибка"),
-                "Найдено": r["found_total"] or 0,
-                "Новых": r["found_new"] or 0,
-                "Завершено": fmt_date(r["finished_at"]),
-                "Ошибка": r["error_text"] or "—",
-            })
-        st.dataframe(pd.DataFrame(run_data), use_container_width=True, hide_index=True)
+    tab_events, tab_runs = st.tabs(["🗒️ События", "🔄 Проверки"])
+
+    with tab_events:
+        _jev = _activity.get_events(owner_email=_owner_scope(), limit=200)
+        if not _jev:
+            st.info("Событий пока нет. Действия (создание профилей, проверки, экспорт и т.д.) "
+                    "будут появляться здесь.")
+        else:
+            _ev_df = pd.DataFrame([{
+                "Время": fmt_datetime_kz(e["created_at"]),
+                "Событие": f"{e['icon']} {e['title']}",
+                "Детали": e["detail"] or "—",
+                "Пользователь": e["user_email"] or "—",
+            } for e in _jev])
+            st.dataframe(_ev_df, use_container_width=True, hide_index=True)
+
+    with tab_runs:
+        runs = get_runs()
+        if not runs:
+            st.info("Проверки ещё не запускались.")
+        else:
+            run_data = []
+            for r in runs:
+                run_data.append({
+                    "Дата/время": fmt_datetime_kz(r["started_at"]),
+                    "Источник": SOURCE_LABELS.get(r["source_code"], r["source_code"]),
+                    "Профиль": r["profile_name"] or "—",
+                    "Статус": "✅ Успешно" if r["status"] == "success" else ("⏳ Выполняется" if r["status"] == "running" else "❌ Ошибка"),
+                    "Найдено": r["found_total"] or 0,
+                    "Новых": r["found_new"] or 0,
+                    "Завершено": fmt_datetime_kz(r["finished_at"]) if r["finished_at"] else "—",
+                    "Ошибка": r["error_text"] or "—",
+                })
+            st.dataframe(pd.DataFrame(run_data), use_container_width=True, hide_index=True)
 
 
 # ─── ВОЗРАЖЕНИЯ ──────────────────────────────────────────────────────────────
@@ -3875,6 +3904,8 @@ elif page == "👥 Пользователи":
                          use_container_width=True):
                 res = _auth.set_role(u["email"], _new_role)
                 if res["ok"]:
+                    _log("role_changed",
+                         detail=f"{u['email']} → {_auth.ROLE_LABELS.get(_new_role, _new_role)}")
                     st.rerun()
                 else:
                     st.error(res["error"])
@@ -3892,6 +3923,7 @@ elif page == "👥 Пользователи":
                              type="secondary", use_container_width=True):
                     res = _auth.delete_user(u["email"])
                     if res["ok"]:
+                        _log("user_deleted", detail=u["email"])
                         st.rerun()
                     else:
                         st.error(res["error"])
