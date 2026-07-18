@@ -1463,20 +1463,24 @@ if page == "🏠 Главная":
             st.markdown('<div class="section-header">Последние товарные знаки <span class="section-link">Все результаты →</span></div>', unsafe_allow_html=True)
             _rl = {"high": ("Высокий", "pill-red"), "medium": ("Средний", "pill-amber")}
             _rows = ""
-            for r in _recent:
+            for r in _recent[:5]:
                 lbl, cls = _rl.get(r["rl"], ("Низкий", "pill-green"))
                 dd = _parse_dt(r["ff"])
                 dstr = dd.strftime("%d.%m.%Y") if dd else "—"
                 src = SOURCE_LABELS.get(r["sc"], r["sc"])
-                _rows += (f"<tr><td style='font-weight:600;'>{r['d']}</td>"
-                          f"<td style='color:#64748B;'>{src}</td>"
-                          f"<td style='color:#64748B;'>{dstr}</td>"
-                          f"<td><span class='pill {cls}'>{lbl}</span></td></tr>")
+                _name = r["d"] or ""
+                _name_disp = (_name[:26] + "…") if len(_name) > 27 else _name
+                _rows += (
+                    f"<tr><td style='font-weight:600;max-width:180px;white-space:nowrap;"
+                    f"overflow:hidden;text-overflow:ellipsis;' title=\"{_name}\">{_name_disp}</td>"
+                    f"<td style='color:#64748B;white-space:nowrap;'>{src}</td>"
+                    f"<td style='color:#64748B;white-space:nowrap;'>{dstr}</td>"
+                    f"<td><span class='pill {cls}'>{lbl}</span></td></tr>")
             if not _rows:
                 st.info("Пока нет найденных знаков.")
             else:
                 st.markdown(f"""
-                <table class="ipw-table">
+                <table class="ipw-table" style="table-layout:fixed;">
                     <thead><tr><th>Товарный знак</th><th>Источник</th><th>Дата</th><th>Риск</th></tr></thead>
                     <tbody>{_rows}</tbody>
                 </table>
