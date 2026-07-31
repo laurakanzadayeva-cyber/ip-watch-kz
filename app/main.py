@@ -436,8 +436,21 @@ def render_mini_calendar():
             {today.day} {_MON[today.month]}
         </div>
         <div style="font-size:11px;color:#94A3B8;margin-bottom:8px;">
-            🕐 {now:%H:%M} · Алматы (UTC+5)
+            🕐 <span id="kz-live-clock">{now:%H:%M:%S}</span> · Алматы (UTC+5)
         </div>
+        <script>
+        (function(){{
+            function pad(n){{return n<10?'0'+n:n;}}
+            function tick(){{
+                var el=document.getElementById('kz-live-clock');
+                if(!el)return;
+                var d=new Date(new Date().getTime()+5*3600000);
+                el.textContent=pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds());
+            }}
+            tick();
+            setInterval(tick,1000);
+        }})();
+        </script>
         <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
             <thead><tr>{head}</tr></thead><tbody>{body}</tbody>
         </table>
@@ -1107,7 +1120,6 @@ with st.sidebar:
             </div>
         </div>
     </div>
-    <p class="sb-section-label">ОСНОВНОЕ</p>
     """, unsafe_allow_html=True)
 
     _is_admin = (not _auth_required) or (_current_user.get("role") == "admin")
