@@ -17,6 +17,7 @@ from pathlib import Path
 from database import init_db, get_connection
 from similarity import RISK_LABELS, RISK_COLORS
 from export_excel import generate_report
+from export_report import generate_csv, generate_word, generate_pdf
 from config_manager import load_credentials, save_credentials, credentials_configured
 
 # ─── Конфигурация страницы ───────────────────────────────────────────────────
@@ -1323,9 +1324,9 @@ if page == "🏠 Главная":
         with _n2:
             with st.popover("⬇️ Экспорт отчёта", use_container_width=True):
                 st.markdown("**Формат отчёта**")
-                if st.button("Excel (.xlsx)", use_container_width=True, key="exp_xlsx"):
-                    _goto("📝 Отчёты")
-                st.caption("PDF / Word / CSV — в разработке")
+                for _fmt_label in ["Excel (.xlsx)", "Word (.docx)", "CSV (.csv)", "PDF (.pdf)"]:
+                    if st.button(_fmt_label, use_container_width=True, key=f"exp_{_fmt_label[:3]}"):
+                        _goto("📝 Отчёты")
 
     # ── Сводная карточка последней проверки ───────────────────────────────────
     _status_map = {
@@ -2867,7 +2868,13 @@ elif page == "📝 Отчёты":
         )
         only_report = st.checkbox("Только записи с отметкой «В отчёт»", value=True)
 
-        submitted = st.form_submit_button("📥 Сформировать Excel-отчёт", type="primary")
+        fmt = st.selectbox(
+            "Формат",
+            options=["Excel (.xlsx)", "Word (.docx)", "CSV (.csv)", "PDF (.pdf)"],
+            index=0,
+        )
+
+        submitted = st.form_submit_button("📥 Сформировать отчёт", type="primary")
 
     if submitted:
         filters = {}
@@ -2881,24 +2888,67 @@ elif page == "📝 Отчёты":
         profile_names = [p["name"] for p in profiles if not selected_profile_ids or p["id"] in selected_profile_ids]
         source_list = selected_sources or list(SOURCE_LABELS.keys())
 
+        kw = dict(
+            marks=marks,
+            title=report_title,
+            period_from=str(period_from),
+            period_to=str(period_to),
+            profiles=profile_names,
+            sources=source_list,
+        )
+
         try:
-            path = generate_report(
-                marks=marks,
-                title=report_title,
-                period_from=str(period_from),
-                period_to=str(period_to),
-                profiles=profile_names,
-                sources=source_list,
-            )
-            st.success(f"Отчёт сформирован: `{path}`")
-            _log("report_exported", detail=Path(path).name)
-            with open(path, "rb") as f:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            if fmt == "Excel (.xlsx)":
+                path = generate_report(**kw)
+                st.success(f"Отчёт сформирован: `{Path(path).name}`")
+                _log("report_exported", detail=Path(path).name)
+                with open(path, "rb") as f:
+                    st.download_button(
+                        "⬇️ Скачать Excel",
+                        data=f.read(),
+                        file_name=Path(path).name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+            elif fmt == "Word (.docx)":
+                data = generate_word(**kw)
+                fname = f"report_{ts}.docx"
+                st.success(f"Отчёт сформирован: `{fname}`")
+                _log("report_exported", detail=fname)
                 st.download_button(
-                    "⬇️ Скачать отчёт",
-                    data=f,
-                    file_name=Path(path).name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "⬇️ Скачать Word",
+                    data=data,
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
+            elif fmt == "CSV (.csv)":
+                data = generate_csv(**kw)
+                fname = f"report_{ts}.csv"
+                st.success(f"Отчёт сформирован: `{fname}`")
+                _log("report_exported", detail=fname)
+                st.download_button(
+                    "⬇️ Скачать CSV",
+                    data=data,
+                    file_name=fname,
+                    mime="text/csv",
+                )
+
+            elif fmt == "PDF (.pdf)":
+                with st.spinner("Формирование PDF..."):
+                    data = generate_pdf(**kw)
+                fname = f"report_{ts}.pdf"
+                st.success(f"Отчёт сформирован: `{fname}`")
+                _log("report_exported", detail=fname)
+                st.download_button(
+                    "⬇️ Скачать PDF",
+                    data=data,
+                    file_name=fname,
+                    mime="application/pdf",
+                )
+
         except Exception as e:
             st.error(f"Ошибка при формировании отчёта: {e}")
 
