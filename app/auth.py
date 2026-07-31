@@ -118,6 +118,43 @@ def ensure_auth_schema():
     except Exception:
         pass
     _seed_legacy_users()
+    _bootstrap_admin()
+
+
+def _bootstrap_admin() -> None:
+    """Создаёт или повышает первого admin из Streamlit Secrets (один раз при старте).
+
+    Добавьте в Streamlit Cloud → Settings → Secrets:
+        admin_email    = "l.kanzadayeva@sergekgroup.kz"
+        admin_password = "ВашПароль"
+    После первого запуска строки можно удалить — роль останется в БД.
+    """
+    try:
+        import streamlit as st
+        admin_email = str(st.secrets.get("admin_email", "")).strip().lower()
+        admin_password = str(st.secrets.get("admin_password", "")).strip()
+        if not admin_email:
+            return
+        existing = _get_user_row(admin_email)
+        if existing:
+            if existing["role"] != "admin":
+                _exec("UPDATE app_users SET role = 'admin' WHERE LOWER(email) = ?",
+                      (admin_email,))
+                logger.info(f"Роль обновлена до admin: {admin_email}")
+            return
+        # Пользователя нет — создаём
+        if not admin_password:
+            logger.warning("admin_email задан в secrets, но admin_password отсутствует — пропускаем.")
+            return
+        _exec(
+            "INSERT INTO app_users (email, name, password_hash, role, verified, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (admin_email, "Администратор", hash_password(admin_password),
+             "admin", 1, time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        logger.info(f"Создан первый администратор: {admin_email}")
+    except Exception as e:
+        logger.warning(f"_bootstrap_admin: {e}")
 
 
 def _seed_legacy_users():

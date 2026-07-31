@@ -1072,7 +1072,7 @@ with st.sidebar:
     <p class="sb-section-label">ОСНОВНОЕ</p>
     """, unsafe_allow_html=True)
 
-    _is_admin = _current_user.get("role") == "admin"
+    _is_admin = (not _auth_required) or (_current_user.get("role") == "admin")
     _system_items = ["⚙️ Настройки"] + (["👥 Пользователи"] if _is_admin else []) + ["📖 Журнал действий"]
     _GROUPS = [
         ("ОСНОВНОЕ", ["🏠 Главная", "🔍 Единый поиск", "📋 Профили мониторинга", "🌐 Источники"]),
