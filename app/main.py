@@ -499,74 +499,121 @@ def _goto(page_label: str):
     st.rerun()
 
 
-def get_profiles():
-    owner = _owner_scope()
+def _row_to_dict(row) -> dict:
+    """Конвертирует sqlite3.Row / _SupaRow → dict для кэширования."""
+    try:
+        return {k: row[k] for k in row.keys()}
+    except Exception:
+        return dict(row)
+
+
+# ── Кэшированные запросы (TTL в секундах) ───────────────────────────────────
+
+@st.cache_data(ttl=300)
+def _fetch_sources() -> list[dict]:
+    with get_connection() as conn:
+        return [_row_to_dict(r) for r in conn.execute("SELECT * FROM sources ORDER BY name").fetchall()]
+
+
+@st.cache_data(ttl=60)
+def _fetch_profiles(owner: str | None) -> list[dict]:
     with get_connection() as conn:
         if owner is None:
-            return conn.execute("SELECT * FROM monitoring_profiles ORDER BY name").fetchall()
-        return conn.execute(
-            "SELECT * FROM monitoring_profiles WHERE owner_email = ? ORDER BY name", (owner,)
-        ).fetchall()
+            rows = conn.execute("SELECT * FROM monitoring_profiles ORDER BY name").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM monitoring_profiles WHERE owner_email = ? ORDER BY name", (owner,)
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+
+@st.cache_data(ttl=20)
+def _fetch_marks(owner: str | None, filters_json: str) -> list[dict]:
+    import json as _json
+    filters = _json.loads(filters_json) if filters_json and filters_json != "{}" else {}
+    query = """
+        SELECT fm.*,
+               (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
+                FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
+               mp.name AS profile_name
+        FROM found_marks fm
+        LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
+    """
+    conditions = []
+    params = []
+    if owner is not None:
+        conditions.append("fm.owner_email = ?")
+        params.append(owner)
+    if filters:
+        if filters.get("source"):
+            conditions.append("fm.source_code = ?")
+            params.append(filters["source"])
+        if filters.get("object_type"):
+            conditions.append("fm.object_type = ?")
+            params.append(filters["object_type"])
+        if filters.get("risk_level"):
+            conditions.append("fm.risk_level = ?")
+            params.append(filters["risk_level"])
+        if filters.get("legal_status"):
+            conditions.append("fm.legal_status = ?")
+            params.append(filters["legal_status"])
+        if filters.get("include_in_report") is not None:
+            conditions.append("fm.include_in_report = ?")
+            params.append(1 if filters["include_in_report"] else 0)
+        if filters.get("owner_contains"):
+            conditions.append("fm.owner LIKE ?")
+            params.append(f"%{filters['owner_contains']}%")
+        if filters.get("profile_id"):
+            conditions.append("fm.profile_id = ?")
+            params.append(filters["profile_id"])
+        if filters.get("date_from"):
+            conditions.append("fm.first_found_at >= ?")
+            params.append(filters["date_from"])
+        if filters.get("date_to"):
+            conditions.append("fm.first_found_at <= ?")
+            params.append(filters["date_to"])
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
+    with get_connection() as conn:
+        return [_row_to_dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+@st.cache_data(ttl=30)
+def _fetch_runs(owner: str | None) -> list[dict]:
+    sql = """SELECT sr.*, mp.name AS profile_name
+             FROM search_runs sr
+             LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id"""
+    params = []
+    if owner is not None:
+        sql += " WHERE mp.owner_email = ?"
+        params.append(owner)
+    sql += " ORDER BY sr.started_at DESC LIMIT 200"
+    with get_connection() as conn:
+        return [_row_to_dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def _bust_cache():
+    """Сбрасывает все кэши после изменения данных."""
+    _fetch_profiles.clear()
+    _fetch_marks.clear()
+    _fetch_runs.clear()
+
+
+# ── Публичные функции (прежние сигнатуры сохранены) ─────────────────────────
+
+def get_profiles():
+    return _fetch_profiles(_owner_scope())
 
 
 def get_sources():
-    with get_connection() as conn:
-        return conn.execute("SELECT * FROM sources ORDER BY name").fetchall()
+    return _fetch_sources()
 
 
 def get_marks(filters: dict | None = None) -> list:
-    with get_connection() as conn:
-        # Подзапрос для nice_classes — избегаем GROUP BY (проблема в PostgreSQL)
-        query = """
-            SELECT fm.*,
-                   (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
-                    FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
-                   mp.name AS profile_name
-            FROM found_marks fm
-            LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
-        """
-        conditions = []
-        params = []
-
-        owner = _owner_scope()
-        if owner is not None:
-            conditions.append("fm.owner_email = ?")
-            params.append(owner)
-
-        if filters:
-            if filters.get("source"):
-                conditions.append("fm.source_code = ?")
-                params.append(filters["source"])
-            if filters.get("object_type"):
-                conditions.append("fm.object_type = ?")
-                params.append(filters["object_type"])
-            if filters.get("risk_level"):
-                conditions.append("fm.risk_level = ?")
-                params.append(filters["risk_level"])
-            if filters.get("legal_status"):
-                conditions.append("fm.legal_status = ?")
-                params.append(filters["legal_status"])
-            if filters.get("include_in_report") is not None:
-                conditions.append("fm.include_in_report = ?")
-                params.append(1 if filters["include_in_report"] else 0)
-            if filters.get("owner_contains"):
-                conditions.append("fm.owner LIKE ?")
-                params.append(f"%{filters['owner_contains']}%")
-            if filters.get("profile_id"):
-                conditions.append("fm.profile_id = ?")
-                params.append(filters["profile_id"])
-            if filters.get("date_from"):
-                conditions.append("fm.first_found_at >= ?")
-                params.append(filters["date_from"])
-            if filters.get("date_to"):
-                conditions.append("fm.first_found_at <= ?")
-                params.append(filters["date_to"])
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY fm.risk_level DESC, fm.first_found_at DESC"
-
-        return conn.execute(query, params).fetchall()
+    import json as _json
+    filters_json = _json.dumps(filters or {}, sort_keys=True)
+    return _fetch_marks(_owner_scope(), filters_json)
 
 
 def get_mark_by_id(mark_id: int):
@@ -583,21 +630,12 @@ def get_mark_by_id(mark_id: int):
         sql += " AND fm.owner_email = ?"
         params.append(owner)
     with get_connection() as conn:
-        return conn.execute(sql, params).fetchone()
+        row = conn.execute(sql, params).fetchone()
+        return _row_to_dict(row) if row else None
 
 
 def get_runs():
-    owner = _owner_scope()
-    sql = ("""SELECT sr.*, mp.name AS profile_name
-              FROM search_runs sr
-              LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id""")
-    params = []
-    if owner is not None:
-        sql += " WHERE mp.owner_email = ?"
-        params.append(owner)
-    sql += " ORDER BY sr.started_at DESC LIMIT 200"
-    with get_connection() as conn:
-        return conn.execute(sql, params).fetchall()
+    return _fetch_runs(_owner_scope())
 
 
 def update_mark(mark_id: int, **kwargs):
@@ -1724,6 +1762,7 @@ elif page == "📋 Профили мониторинга":
                                 conn.execute("PRAGMA foreign_keys = ON")
                                 conn.commit()
                             _log("profile_deleted", detail=p["name"])
+                            _bust_cache()
                             st.rerun()
 
     with tab2:
@@ -1822,6 +1861,7 @@ elif page == "📋 Профили мониторинга":
                     auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_variants(main_designation))}." if _auto_variants(main_designation) else ""
                     st.success(f"Профиль «{name}» создан.{auto_msg}")
                     _log("profile_created", detail=name)
+                    _bust_cache()
                     st.rerun()
 
 
@@ -1887,6 +1927,7 @@ elif page == "▶️ Запуск проверки":
                     profile_ids=profile_ids or None,
                     source_codes=source_codes or None,
                 )
+            _bust_cache()
             return result
 
         profile_id_map = {p["name"]: p["id"] for p in active_profiles}
