@@ -1122,15 +1122,37 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    _is_admin = (not _auth_required) or (_current_user.get("role") == "admin")
-    _system_items = ["⚙️ Настройки"] + (["👥 Пользователи"] if _is_admin else []) + ["📖 Журнал действий"]
-    _GROUPS = [
+    # ── Роль и права доступа (ТЗ 15) ──────────────────────────────────────────
+    _role = "admin" if not _auth_required else _current_user.get("role", "observer")
+    _is_admin = _role == "admin"
+    _can_edit = _role in ("admin", "lawyer")   # создавать/редактировать/запускать проверки
+
+    # Разделы, доступные только администратору
+    _ADMIN_ONLY = {"⚙️ Настройки", "👥 Пользователи", "📖 Журнал действий", "🌐 Источники"}
+    # Разделы, требующие права редактирования (скрыты у наблюдателя)
+    _EDIT_ONLY = {"📋 Профили мониторинга", "▶️ Запуск проверки"}
+
+    def _item_allowed(it):
+        if _is_admin:
+            return True
+        if it in _ADMIN_ONLY:
+            return False
+        if not _can_edit and it in _EDIT_ONLY:
+            return False
+        return True
+
+    _ALL_GROUPS = [
         ("ОСНОВНОЕ", ["🏠 Главная", "🔍 Единый поиск", "📋 Профили мониторинга", "🌐 Источники"]),
         ("МОНИТОРИНГ", ["▶️ Запуск проверки", "📊 Результаты", "📰 Бюллетень Kazpatent",
                         "⚖️ Мониторинг законодательства", "📅 Календарь", "📝 Отчёты"]),
         ("БАЗА ЗНАНИЙ", ["📚 Правовая база", "📄 Статьи и обзоры", "📗 Справочники"]),
-        ("СИСТЕМА", _system_items),
+        ("СИСТЕМА", ["⚙️ Настройки", "👥 Пользователи", "📖 Журнал действий"]),
     ]
+    _GROUPS = []
+    for _gt, _gi in _ALL_GROUPS:
+        _vis = [it for it in _gi if _item_allowed(it)]
+        if _vis:
+            _GROUPS.append((_gt, _vis))
     _menu_items = [it for _g, _its in _GROUPS for it in _its]
 
     # текущий раздел + программная навигация из карточек дашборда
@@ -1414,7 +1436,11 @@ if page == "🏠 Главная":
         """, unsafe_allow_html=True)
     with _sum_btn:
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        run_now = st.button("▶ Проверить сейчас", type="primary", use_container_width=True)
+        if _can_edit:
+            run_now = st.button("▶ Проверить сейчас", type="primary", use_container_width=True)
+        else:
+            run_now = False
+            st.caption("🔒 Только просмотр")
 
     # ── Диалог подтверждения запуска проверки (ТЗ 5.4) ────────────────────────
     @st.dialog("Запуск проверки")
@@ -1528,7 +1554,9 @@ if page == "🏠 Главная":
             ("▶️", "Запустить проверку", "Проверка всех профилей", "▶️ Запуск проверки"),
             ("📊", "Результаты", "Просмотр последних результатов", "📊 Результаты"),
         ]
-        _qc = st.columns(4)
+        # у наблюдателя оставляем только просмотровые действия
+        _qa = [q for q in _qa if q[3] in _menu_items]
+        _qc = st.columns(len(_qa)) if _qa else [st]
         for i, (ic, ttl, desc, target) in enumerate(_qa):
             with _qc[i]:
                 st.markdown(f"""
@@ -2076,8 +2104,9 @@ elif page == "📊 Результаты":
 
     marks = get_marks(filters)
 
-    # ── Кнопка ручного добавления ────────────────────────────────────────────
-    with st.expander("➕ Добавить знак вручную (из реестра / НИИС)", expanded=False):
+    # ── Кнопка ручного добавления (только для роли с правом редактирования) ───
+    if _can_edit:
+      with st.expander("➕ Добавить знак вручную (из реестра / НИИС)", expanded=False):
         st.caption("Используйте для добавления знаков, найденных самостоятельно в реестре НИИС, WIPO или других источниках.")
         with st.form("manual_add_mark"):
             mc1, mc2 = st.columns(2)
@@ -4009,7 +4038,7 @@ elif page == "👥 Пользователи":
                 unsafe_allow_html=True)
 
     _ROLE_BADGE = {
-        "admin": "🛡️ Администратор", "premium": "⭐ Премиум", "standard": "👤 Стандарт",
+        "admin": "🛡️ Администратор", "lawyer": "⚖️ Юрист", "observer": "👁️ Наблюдатель",
     }
     for u in _shown:
         is_self = u["email"].strip().lower() == _my_email

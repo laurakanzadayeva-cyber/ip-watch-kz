@@ -45,10 +45,10 @@ CODE_TTL_SECONDS = 15 * 60  # код действует 15 минут
 REMEMBER_DAYS = 30          # срок cookie «Запомнить меня»
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# Роли доступа
-ROLES = ["standard", "premium", "admin"]
-ROLE_LABELS = {"standard": "Стандарт", "premium": "Премиум", "admin": "Администратор"}
-DEFAULT_ROLE = "standard"
+# Роли доступа (ТЗ 15): наблюдатель < юрист < администратор
+ROLES = ["observer", "lawyer", "admin"]
+ROLE_LABELS = {"observer": "Наблюдатель", "lawyer": "Юрист", "admin": "Администратор"}
+DEFAULT_ROLE = "observer"
 
 
 # ─── Низкоуровневый доступ к БД ───────────────────────────────────────────────
@@ -112,11 +112,12 @@ def ensure_auth_schema():
             _exec(stmt)
         except Exception as e:
             logger.warning(f"Не удалось создать таблицу авторизации: {e}")
-    # Миграция старой роли 'user' → 'standard'
-    try:
-        _exec("UPDATE app_users SET role = 'standard' WHERE role = 'user'")
-    except Exception:
-        pass
+    # Миграция ролей к схеме ТЗ: user/standard → observer, premium → lawyer
+    for _old, _new in (("user", "observer"), ("standard", "observer"), ("premium", "lawyer")):
+        try:
+            _exec("UPDATE app_users SET role = ? WHERE role = ?", (_new, _old))
+        except Exception:
+            pass
     _seed_legacy_users()
     _bootstrap_admin()
 
