@@ -343,11 +343,11 @@ def _auto_variants(designation: str) -> list[str]:
 # ─── Время Казахстана (UTC+5, единое с 2024 г., без перехода на летнее) ───────
 from datetime import timezone, timedelta
 
-KZ_TZ = timezone(timedelta(hours=5), "Алматы")
+KZ_TZ = timezone(timedelta(hours=5), "Астана")
 
 
 def kz_now() -> datetime:
-    """Текущие дата и время Казахстана (Алматы, UTC+5)."""
+    """Текущие дата и время Казахстана (Астана, UTC+5)."""
     return datetime.now(KZ_TZ)
 
 
@@ -357,14 +357,14 @@ def kz_today() -> date:
 
 
 def fmt_datetime_kz(val) -> str:
-    """Форматирует дату-время (в т.ч. ISO/UTC) в казахстанское: «17.07.2026, 23:31 (Алматы)»."""
+    """Форматирует дату-время (в т.ч. ISO/UTC) в казахстанское: «17.07.2026, 23:31 (Астана)»."""
     if not val:
         return "—"
     try:
         dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(KZ_TZ).strftime("%d.%m.%Y, %H:%M") + " (Алматы)"
+        return dt.astimezone(KZ_TZ).strftime("%d.%m.%Y, %H:%M") + " (Астана)"
     except (ValueError, TypeError):
         return str(val)
 
@@ -403,7 +403,7 @@ def _live_clock_widget():
     now = kz_now()
     st.markdown(
         f'<div style="font-size:11px;color:#94A3B8;margin:-4px 0 6px 0;">'
-        f'🕐 {now:%H:%M:%S} · Алматы (UTC+5)</div>',
+        f'🕐 {now:%H:%M:%S} · Астана (UTC+5)</div>',
         unsafe_allow_html=True,
     )
 
@@ -1416,19 +1416,49 @@ if page == "🏠 Главная":
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         run_now = st.button("▶ Проверить сейчас", type="primary", use_container_width=True)
 
+    # ── Диалог подтверждения запуска проверки (ТЗ 5.4) ────────────────────────
+    @st.dialog("Запуск проверки")
+    def _run_check_dialog(_active):
+        _names = {p["id"]: p["name"] for p in _active}
+        st.write(f"Активных профилей: **{len(_active)}**")
+        _mode = st.radio("Какие профили проверить?",
+                         ["Все активные", "Выбранные"], key="rc_mode")
+        _sel_ids = [p["id"] for p in _active]
+        if _mode == "Выбранные":
+            _sel_ids = st.multiselect(
+                "Профили", options=[p["id"] for p in _active],
+                format_func=lambda i: _names.get(i, i),
+                default=[p["id"] for p in _active], key="rc_sel")
+        st.caption("Во время проверки повторный запуск заблокирован.")
+        _c1, _c2 = st.columns(2)
+        if _c1.button("▶ Запустить", type="primary", use_container_width=True,
+                      disabled=not _sel_ids):
+            from monitor import run_monitoring
+            with st.spinner("Проверка выполняется…"):
+                res = run_monitoring(profile_ids=_sel_ids)
+            st.session_state["_check_result"] = res
+            _log("check_completed",
+                 detail=f"Найдено: {res.get('total_found', 0)}, "
+                        f"новых: {res.get('total_new', 0)} · профилей: {len(_sel_ids)}")
+            st.rerun()
+        if _c2.button("Отмена", use_container_width=True):
+            st.rerun()
+
     if run_now:
         if active_profiles == 0:
             st.warning("Нет активных профилей. Создайте профиль в разделе «Профили мониторинга».")
         else:
-            from monitor import run_monitoring
-            with st.spinner("Проверка выполняется…"):
-                res = run_monitoring()
-            if res.get("errors"):
-                st.error(f"Ошибки при проверке: {res['errors'][0]['error']}")
-            else:
-                st.success(f"✅ Проверка завершена. Найдено: {res['total_found']}, новых: {res['total_new']}.")
-            _log("check_completed", detail=f"Найдено: {res.get('total_found', 0)}, новых: {res.get('total_new', 0)}")
-            st.rerun()
+            _active_list = [p for p in get_profiles() if p["status"] == "active"]
+            _run_check_dialog(_active_list)
+
+    # результат проверки после закрытия диалога
+    if "_check_result" in st.session_state:
+        _res = st.session_state.pop("_check_result")
+        if _res.get("errors"):
+            st.error(f"Ошибки при проверке: {_res['errors'][0]['error']}")
+        else:
+            st.success(f"✅ Проверка завершена. Найдено: {_res.get('total_found', 0)}, "
+                       f"новых: {_res.get('total_new', 0)}.")
 
     # ── Основная сетка: центр + правая панель ─────────────────────────────────
     _main, _rp = st.columns([2.7, 1], gap="large")
@@ -3760,7 +3790,7 @@ elif page == "📅 Календарь":
     <div style="margin-bottom:8px;">
         <div style="font-size:22px;font-weight:700;color:#0F172A;">Календарь</div>
         <div style="font-size:13px;color:#64748B;margin-top:3px;">
-            Реальное время Казахстана (Алматы, UTC+5) и сроки по товарным знакам
+            Реальное время Казахстана (Астана, UTC+5) и сроки по товарным знакам
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3779,7 +3809,7 @@ elif page == "📅 Календарь":
                 <div style="font-size:34px;font-weight:800;letter-spacing:1px;
                             font-variant-numeric:tabular-nums;">{now:%H:%M:%S}</div>
                 <div style="font-size:14px;opacity:.9;margin-top:2px;">
-                    {wd}, {now.day} {_RU_MONTHS[now.month]} {now.year} г. · Алматы (UTC+5)
+                    {wd}, {now.day} {_RU_MONTHS[now.month]} {now.year} г. · Астана (UTC+5)
                 </div>
             </div>
         </div>
