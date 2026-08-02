@@ -369,6 +369,45 @@ def fmt_datetime_kz(val) -> str:
         return str(val)
 
 
+@st.cache_data(ttl=120)
+def _get_upcoming_count(owner: str | None) -> int:
+    """Счётчик знаков со сроком оспаривания в ближайшие 90 дней (кэш 2 мин)."""
+    today = kz_today()
+    count = 0
+    try:
+        _own_sql = "" if owner is None else " AND owner_email = ?"
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT registration_date FROM found_marks "
+            "WHERE registration_date IS NOT NULL AND registration_date != ''" + _own_sql,
+            [] if owner is None else [owner],
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            ct = calc_contestation(r["registration_date"] if hasattr(r, "__getitem__") else r[0])
+            if ct.get("deadline"):
+                try:
+                    dd = datetime.strptime(ct["deadline"], "%d.%m.%Y").date()
+                    if 0 <= (dd - today).days <= 90:
+                        count += 1
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return count
+
+
+@st.fragment(run_every=1)
+def _live_clock_widget():
+    """Тикающие часы — перерисовываются каждую секунду без перезагрузки страницы."""
+    now = kz_now()
+    st.markdown(
+        f'<div style="font-size:11px;color:#94A3B8;margin:-4px 0 6px 0;">'
+        f'🕐 {now:%H:%M:%S} · Алматы (UTC+5)</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_mini_calendar():
     """Компактный календарь текущего месяца (для Главной): дата РК + сетка + сроки."""
     import calendar as _cm
@@ -377,32 +416,8 @@ def render_mini_calendar():
     _MON_NOM = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
                 "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
     _WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    now = kz_now()
-    today = now.date()
-
-    # ближайшие сроки (90 дней) — счётчик
-    upcoming_cnt = 0
-    try:
-        _own = _owner_scope()
-        _own_sql = "" if _own is None else " AND owner_email = ?"
-        conn = get_connection()
-        rows = conn.execute(
-            "SELECT registration_date FROM found_marks "
-            "WHERE registration_date IS NOT NULL AND registration_date != ''" + _own_sql,
-            [] if _own is None else [_own],
-        ).fetchall()
-        conn.close()
-        for r in rows:
-            ct = calc_contestation(r["registration_date"])
-            if ct.get("deadline"):
-                try:
-                    dd = datetime.strptime(ct["deadline"], "%d.%m.%Y").date()
-                    if 0 <= (dd - today).days <= 90:
-                        upcoming_cnt += 1
-                except ValueError:
-                    pass
-    except Exception:
-        pass
+    today = kz_today()
+    upcoming_cnt = _get_upcoming_count(_owner_scope())
 
     weeks = _cm.monthcalendar(today.year, today.month)
     body = ""
@@ -428,6 +443,7 @@ def render_mini_calendar():
         if upcoming_cnt else
         "<div style='margin-top:8px;font-size:11.5px;color:#64748B;'>Ближайших сроков нет</div>"
     )
+    _live_clock_widget()
     st.markdown(f"""
     <div style="background:#fff;border:1px solid #E2E8F0;border-radius:14px;
                 padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04);">
@@ -435,22 +451,6 @@ def render_mini_calendar():
         <div style="font-size:20px;font-weight:800;color:#1E3A8A;line-height:1.1;margin:2px 0 4px;">
             {today.day} {_MON[today.month]}
         </div>
-        <div style="font-size:11px;color:#94A3B8;margin-bottom:8px;">
-            🕐 <span id="kz-live-clock">{now:%H:%M:%S}</span> · Алматы (UTC+5)
-        </div>
-        <script>
-        (function(){{
-            function pad(n){{return n<10?'0'+n:n;}}
-            function tick(){{
-                var el=document.getElementById('kz-live-clock');
-                if(!el)return;
-                var d=new Date(new Date().getTime()+5*3600000);
-                el.textContent=pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds());
-            }}
-            tick();
-            setInterval(tick,1000);
-        }})();
-        </script>
         <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
             <thead><tr>{head}</tr></thead><tbody>{body}</tbody>
         </table>
