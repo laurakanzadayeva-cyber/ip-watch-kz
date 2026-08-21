@@ -264,10 +264,32 @@ RISK_BADGE = {
 }
 
 
+def _parse_date_any(val):
+    """Разбирает дату из строки/даты/датавремени. Возвращает date или None."""
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    s = str(val).strip()
+    if not s:
+        return None
+    s = s.replace("T", " ").split(" ")[0][:10]
+    for f in ("%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, f).date()
+        except ValueError:
+            continue
+    return None
+
+
 def fmt_date(val):
+    """Дата в формате ДД.ММ.ГГГГ (ТЗ 18)."""
     if not val:
         return "—"
-    return str(val)
+    d = _parse_date_any(val)
+    return d.strftime("%d.%m.%Y") if d else str(val)
 
 
 # ─── Транслитерация для товарных знаков КЗ ───────────────────────────────────
@@ -498,6 +520,90 @@ def calc_contestation(reg_date_val):
         return {"status": "unknown", "label": "—", "days_left": None, "deadline": None}
 
 
+COUNTRY_BY_SOURCE = {
+    "kz_registry": ("KZ", "Казахстан"),
+    "kz_bulletin": ("KZ", "Казахстан"),
+    "manual": ("—", "не указана"),
+    "wipo": ("INT", "международная (WIPO)"),
+    "madrid": ("INT", "международная (Madrid)"),
+}
+
+
+def mark_country(mark: dict) -> str:
+    """Страна знака: по источнику, при отсутствии — по адресу правообладателя."""
+    code, name = COUNTRY_BY_SOURCE.get(mark.get("source_code") or "", ("—", "не указана"))
+    if code == "—":
+        addr = (mark.get("owner_address") or "").lower()
+        if any(w in addr for w in ("казахстан", "kazakhstan", "рк,", "г. алматы", "астана")):
+            return "KZ · Казахстан"
+        return "—"
+    return f"{code} · {name}"
+
+
+def calc_validity(reg_date_val, years: int = 10) -> dict:
+    """Срок действия регистрации ТЗ: 10 лет с даты регистрации (ст. 15 Закона о ТЗ РК)."""
+    d = _parse_date_any(reg_date_val)
+    if not d:
+        return {"status": "unknown", "label": "—", "until": None, "days_left": None}
+    try:
+        until = date(d.year + years, d.month, d.day)
+    except ValueError:  # 29 февраля
+        until = date(d.year + years, d.month, 28)
+    days_left = (until - kz_today()).days
+    if days_left < 0:
+        status = "expired"
+    elif days_left <= 180:
+        status = "urgent"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "until": until.strftime("%d.%m.%Y"),
+        "days_left": days_left,
+        "label": (f"истёк {until:%d.%m.%Y}" if status == "expired"
+                  else f"до {until:%d.%m.%Y} · осталось {days_left} дн."),
+    }
+
+
+def calc_similarity(control: str, candidate: str) -> dict:
+    """Коэффициент сходства и обоснование (ТЗ 9.2)."""
+    if not control or not candidate:
+        return {"score": None, "reason": "", "match_type": ""}
+    try:
+        import similarity as _sim
+        res = _sim.compare(control, candidate)
+        return {
+            "score": res.get("score"),
+            "reason": res.get("reason") or "",
+            "match_type": res.get("match_type") or "",
+        }
+    except Exception:
+        return {"score": None, "reason": "", "match_type": ""}
+
+
+def build_risk_rationale(mark: dict, sim: dict) -> list[str]:
+    """Обоснование уровня риска — список факторов (ТЗ 7.3, 9.2)."""
+    items = []
+    if sim.get("score") is not None:
+        items.append(f"Коэффициент сходства обозначений — {sim['score']}%")
+    if sim.get("reason"):
+        items.append(sim["reason"])
+    if mark.get("match_reason"):
+        items.append(mark["match_reason"])
+    if mark.get("nice_classes_str"):
+        items.append(f"Пересечение классов МКТУ: {mark['nice_classes_str']}")
+    country = mark_country(mark)
+    if country != "—":
+        items.append(f"Страна охраны: {country}")
+    st_mark = (mark.get("status_mark") or "").lower()
+    if st_mark in ("active", "registered"):
+        items.append("Действующая регистрация или активная заявка")
+    ct = calc_contestation(mark.get("registration_date"))
+    if ct["status"] in ("open", "urgent"):
+        items.append(f"Срок оспаривания открыт до {ct['deadline']}")
+    return items
+
+
 def _owner_scope():
     """Email для фильтра «свои данные». None = видит всё (админ или вход отключён)."""
     u = st.session_state.get("auth_user", {})
@@ -508,8 +614,21 @@ def _owner_scope():
 
 def _goto(page_label: str):
     """Переход к разделу из карточек дашборда."""
+    if page_label != "📊 Результаты":
+        st.session_state.pop("_open_mark_id", None)
     st.session_state["_goto_page"] = page_label
     st.rerun()
+
+
+def _open_results(*, risk: str = "", source: str = "", mark_id: int | None = None,
+                  profile_id: str = ""):
+    """Переход в «Результаты» с готовым фильтром / открытой карточкой (ТЗ 16, сценарий 2)."""
+    st.session_state["_res_prefill"] = {"risk": risk, "source": source, "profile": profile_id}
+    if mark_id is not None:
+        st.session_state["_open_mark_id"] = int(mark_id)
+    else:
+        st.session_state.pop("_open_mark_id", None)
+    _goto("📊 Результаты")
 
 
 def _row_to_dict(row) -> dict:
@@ -634,7 +753,8 @@ def get_mark_by_id(mark_id: int):
     sql = """SELECT fm.*,
                     (SELECT GROUP_CONCAT(mc.nice_class ORDER BY mc.nice_class)
                      FROM mark_classes mc WHERE mc.mark_id = fm.id) AS nice_classes_str,
-                    mp.name AS profile_name
+                    mp.name AS profile_name,
+                    mp.main_designation AS profile_designation
              FROM found_marks fm
              LEFT JOIN monitoring_profiles mp ON mp.id = fm.profile_id
              WHERE fm.id = ?"""
@@ -1285,6 +1405,173 @@ IP Watch KZ предназначена для мониторинга заяво�
 
 # ─── ГЛАВНАЯ ─────────────────────────────────────────────────────────────────
 
+def _show_mark_card(mark_id: int):
+    mark = get_mark_by_id(mark_id)
+    if not mark:
+        return
+
+    sim = calc_similarity(mark.get("profile_designation") or "", mark["designation"])
+    country = mark_country(mark)
+    validity = calc_validity(mark["registration_date"])
+    risk_label = RISK_BADGE.get(mark["risk_level"], mark["risk_level"])
+    legal_label = LEGAL_STATUS_LABELS.get(mark["legal_status"], mark["legal_status"] or "—")
+    is_registered = bool(mark["registration_number"])
+
+    st.markdown("---")
+    st.markdown(f"## 📄 Карточка знака: **{mark['designation']}**")
+
+    # ── Шапка: изображение + обозначение + сходство/риск/статус ───────────────
+    _img, _head = st.columns([1, 4])
+    with _img:
+        if mark.get("image_url"):
+            st.image(mark["image_url"], use_container_width=True)
+        else:
+            st.markdown(
+                "<div style='border:1px dashed #E2E8F0;border-radius:10px;background:#F8FAFC;"
+                "height:110px;display:flex;align-items:center;justify-content:center;"
+                "color:#94A3B8;font-size:12px;text-align:center;padding:8px;'>"
+                "Изображение<br>не предоставлено</div>", unsafe_allow_html=True)
+    with _head:
+        _score = f"{sim['score']}%" if sim["score"] is not None else "—"
+        st.markdown(f"""
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+            <span style="font-size:22px;font-weight:800;color:#0F172A;">{mark['designation']}</span>
+            <span style="font-size:13px;color:#64748B;">
+                {OBJECT_TYPE_LABELS.get(mark['object_type'], mark['object_type'] or '—')}
+            </span>
+        </div>
+        <div style="display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:#334155;">
+            <span><b>Уровень риска:</b> {risk_label}</span>
+            <span><b>Коэффициент сходства:</b> {_score}</span>
+            <span><b>Статус обработки:</b> {legal_label}</span>
+            <span><b>Страна:</b> {country}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.write(f"**Источник:** {SOURCE_LABELS.get(mark['source_code'], mark['source_code'])}")
+        st.write(f"**Тип объекта:** {OBJECT_TYPE_LABELS.get(mark['object_type'], mark['object_type'])}")
+        st.write(f"**Статус знака:** {STATUS_LABELS.get(mark['status_mark'], mark['status_mark'])}")
+        st.write(f"**№ заявки:** {mark['application_number'] or '—'}")
+        st.write(f"**№ регистрации:** {mark['registration_number'] or '—'}")
+    with col2:
+        st.write(f"**Заявитель:** {mark['owner'] or '—'}"
+                 + ("" if is_registered else "  ·  _заявка_"))
+        st.write(f"**Правообладатель:** {mark['owner'] if is_registered else '—'}")
+        st.write(f"**Адрес:** {mark['owner_address'] or '—'}")
+        st.write(f"**Классы МКТУ:** {mark['nice_classes_str'] or '—'}")
+        st.write(f"**Страна:** {country}")
+        st.write(f"**Связанный профиль:** {mark['profile_name'] or '— не привязан —'}")
+    with col3:
+        st.write(f"**Дата приоритета:** {fmt_date(mark['application_date'])}"
+                 + (" _(по дате подачи)_" if mark['application_date'] else ""))
+        st.write(f"**Дата регистрации:** {fmt_date(mark['registration_date'])}")
+        st.write(f"**Дата публикации:** {fmt_date(mark['publication_date'])}")
+        st.write(f"**Срок действия (10 лет):** {validity['label']}")
+        st.write(f"**Первая фиксация:** {fmt_date(mark['first_found_at'])}")
+        st.write(f"**Последняя проверка:** {fmt_date(mark['last_checked_at'])}")
+        if mark["source_url"]:
+            st.write(f"**Ссылка:** [Открыть в источнике]({mark['source_url']})")
+
+    if mark["goods_services"]:
+        st.write(f"**Товары/услуги:** {mark['goods_services']}")
+
+    # ── Обоснование уровня риска (ТЗ 9.2) ─────────────────────────────────────
+    _rationale = build_risk_rationale(mark, sim)
+    if _rationale:
+        _lis = "".join(f"<li style='margin:2px 0;'>{x}</li>" for x in _rationale)
+        st.markdown(f"""
+        <div style="border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;
+                    padding:14px 18px;margin:12px 0;">
+            <div style="font-size:13px;color:#64748B;font-weight:600;text-transform:uppercase;
+                        letter-spacing:0.5px;margin-bottom:6px;">
+                🧭 Обоснование уровня риска
+            </div>
+            <ul style="margin:0;padding-left:18px;font-size:13.5px;color:#334155;">{_lis}</ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Срок оспаривания ──────────────────────────────────────────────────────
+    ct = calc_contestation(mark["registration_date"])
+    if ct["status"] != "unknown":
+        color_map = {"open": "#16a34a", "urgent": "#d97706", "expired": "#dc2626"}
+        bg_map    = {"open": "#f0fdf4", "urgent": "#fffbeb", "expired": "#fef2f2"}
+        border_map = {"open": "#bbf7d0", "urgent": "#fde68a", "expired": "#fecaca"}
+        color  = color_map.get(ct["status"], "#64748b")
+        bg     = bg_map.get(ct["status"], "#f8fafc")
+        border = border_map.get(ct["status"], "#e2e8f0")
+
+        if ct["status"] == "expired":
+            verdict = "Срок оспаривания истёк — аннулирование через суд затруднено"
+        elif ct["status"] == "urgent":
+            verdict = f"⚠️ Срочно! Осталось {ct['days_left']} дней — необходимо подать возражение"
+        else:
+            verdict = f"Можно подать возражение в НИИС до {ct['deadline']}"
+
+        st.markdown(f"""
+        <div style="border:1px solid {border};border-radius:10px;background:{bg};
+                    padding:14px 18px;margin:12px 0;">
+            <div style="font-size:13px;color:#64748b;margin-bottom:4px;font-weight:600;
+                        text-transform:uppercase;letter-spacing:0.5px;">
+                ⚖️ Срок оспаривания (5 лет с даты регистрации)
+            </div>
+            <div style="font-size:20px;font-weight:700;color:{color};">
+                {ct['label']} &nbsp;·&nbsp;
+                <span style="font-size:14px;font-weight:400;">до {ct['deadline']}</span>
+            </div>
+            <div style="font-size:13px;color:#475569;margin-top:4px;">{verdict}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("### ⚖️ Юридическая оценка")
+    with st.form(f"legal_form_{mark_id}"):
+        lc1, lc2, lc3 = st.columns(3)
+        with lc1:
+            new_risk = st.selectbox(
+                "Степень риска",
+                options=list(RISK_LABELS.keys()),
+                index=list(RISK_LABELS.keys()).index(mark["risk_level"]) if mark["risk_level"] in RISK_LABELS else 0,
+                format_func=lambda x: RISK_LABELS.get(x, x),
+            )
+            new_legal_status = st.selectbox(
+                "Статус проверки",
+                options=list(LEGAL_STATUS_LABELS.keys()),
+                index=list(LEGAL_STATUS_LABELS.keys()).index(mark["legal_status"]) if mark["legal_status"] in LEGAL_STATUS_LABELS else 0,
+                format_func=lambda x: LEGAL_STATUS_LABELS.get(x, x),
+            )
+        with lc2:
+            new_action = st.selectbox(
+                "Рекомендуемое действие",
+                options=["watch", "investigate", "prepare_position", "archive"],
+                index=["watch", "investigate", "prepare_position", "archive"].index(mark["recommended_action"] or "watch"),
+                format_func=lambda x: {
+                    "watch": "Наблюдать",
+                    "investigate": "Проверить подробнее",
+                    "prepare_position": "Подготовить позицию",
+                    "archive": "Архив",
+                }.get(x, x),
+            )
+            new_include = st.checkbox("Включить в отчёт", value=bool(mark["include_in_report"]))
+        with lc3:
+            new_recheck = st.checkbox("Требуется повторная проверка", value=bool(mark["recheck_needed"]))
+            new_comment = st.text_area("Комментарий юриста", value=mark["lawyer_comment"] or "", height=100)
+
+        if st.form_submit_button("💾 Сохранить оценку", type="primary"):
+            update_mark(
+                mark_id,
+                risk_level=new_risk,
+                legal_status=new_legal_status,
+                recommended_action=new_action,
+                include_in_report=1 if new_include else 0,
+                recheck_needed=1 if new_recheck else 0,
+                lawyer_comment=new_comment,
+            )
+            st.success("Оценка сохранена.")
+            st.rerun()
+
+
+
 if page == "🏠 Главная":
     from datetime import timedelta as _td
 
@@ -1525,24 +1812,20 @@ if page == "🏠 Главная":
             {_dl_html}
         </div>
         """, unsafe_allow_html=True)
+        if st.button("Смотреть все сроки →", key="dash_all_deadlines",
+                     use_container_width=True):
+            _goto("📅 Календарь")
 
-        # Источники мониторинга
-        _src_html = ""
-        for r in _srcrows:
+        # Источники мониторинга (переход к результатам с фильтром — ТЗ 10.3)
+        st.markdown(
+            '<div class="section-header" style="margin-top:14px;">Источники мониторинга</div>',
+            unsafe_allow_html=True)
+        if not _srcrows:
+            st.caption("Нет данных по источникам.")
+        for _i, r in enumerate(_srcrows):
             nm = SOURCE_LABELS.get(r["sc"], r["sc"])
-            _src_html += (
-                f"<div style='display:flex;justify-content:space-between;padding:7px 0;"
-                f"border-bottom:1px solid #F1F5F9;font-size:13px;'>"
-                f"<span style='color:#334155;'>{nm}</span>"
-                f"<span style='font-weight:700;color:#1E3A8A;'>{r['c']}</span></div>")
-        if not _src_html:
-            _src_html = "<div style='font-size:12px;color:#94A3B8;padding:6px 0;'>Нет данных</div>"
-        st.markdown(f"""
-        <div class="card" style="margin-top:14px;">
-            <div style="font-size:14px;font-weight:700;color:#0F172A;margin-bottom:4px;">🌐 Источники мониторинга</div>
-            {_src_html}
-        </div>
-        """, unsafe_allow_html=True)
+            if st.button(f"{nm} · {r['c']}", key=f"srcbtn_{_i}", use_container_width=True):
+                _open_results(source=r["sc"])
 
     # ============ ЦЕНТР ============
     with _main:
@@ -1600,13 +1883,36 @@ if page == "🏠 Главная":
         </div>
         """, unsafe_allow_html=True)
 
+        # переходы по показателям (ТЗ 7.1–7.5, сценарий 2)
+        _mc1, _mc2, _mc3, _mc4, _mc5 = st.columns(5)
+        with _mc1:
+            if st.button("Профили →", key="mc_profiles", use_container_width=True,
+                         disabled="📋 Профили мониторинга" not in _menu_items):
+                _goto("📋 Профили мониторинга")
+        with _mc2:
+            if st.button("Все результаты →", key="mc_all", use_container_width=True):
+                _open_results()
+        with _mc3:
+            if st.button("Высокий риск →", key="mc_high", use_container_width=True):
+                _open_results(risk="high")
+        with _mc4:
+            if st.button("Средний риск →", key="mc_med", use_container_width=True):
+                _open_results(risk="medium")
+        with _mc5:
+            if st.button("Низкий риск →", key="mc_low", use_container_width=True):
+                _open_results(risk="low")
+
         # График + таблица последних
         _ch, _tb = st.columns([1.15, 1], gap="medium")
         with _ch:
             st.markdown('<div class="section-header">Динамика найденных совпадений</div>', unsafe_allow_html=True)
-            _period = st.radio("Период", ["7 дней", "30 дней", "90 дней"], index=1,
-                               horizontal=True, label_visibility="collapsed", key="dash_period")
-            _days = {"7 дней": 7, "30 дней": 30, "90 дней": 90}[_period]
+            _period = st.radio("Период", ["7 дней", "30 дней", "90 дней", "Текущий год"],
+                               index=1, horizontal=True, label_visibility="collapsed",
+                               key="dash_period")
+            if _period == "Текущий год":
+                _days = (_today - date(_today.year, 1, 1)).days + 1
+            else:
+                _days = {"7 дней": 7, "30 дней": 30, "90 дней": 90}[_period]
             _buckets = {(_today - _td(days=k)): 0 for k in range(_days - 1, -1, -1)}
             for d in _dates:
                 dk = d.date()
@@ -1615,39 +1921,60 @@ if page == "🏠 Главная":
             if sum(_buckets.values()) == 0:
                 st.info("За выбранный период совпадения не найдены.")
             else:
-                import pandas as _pd
-                _df = _pd.DataFrame({"Дата": list(_buckets.keys()), "Совпадений": list(_buckets.values())})
-                _df = _df.set_index("Дата")
-                st.line_chart(_df, height=240, color="#2563EB")
+                import altair as _alt
+                _df = pd.DataFrame({
+                    "Дата": list(_buckets.keys()),
+                    "Совпадений": list(_buckets.values()),
+                })
+                _df["Дата (текст)"] = [d.strftime("%d.%m.%Y") for d in _df["Дата"]]
+                _chart = (
+                    _alt.Chart(_df)
+                    .mark_line(color="#2563EB", point=_alt.OverlayMarkDef(color="#2563EB"))
+                    .encode(
+                        x=_alt.X("Дата:T", title="Дата",
+                                 axis=_alt.Axis(format="%d.%m", labelAngle=0)),
+                        y=_alt.Y("Совпадений:Q", title="Совпадений",
+                                 axis=_alt.Axis(tickMinStep=1)),
+                        tooltip=[_alt.Tooltip("Дата (текст):N", title="Дата"),
+                                 _alt.Tooltip("Совпадений:Q", title="Совпадений")],
+                    )
+                    .properties(height=240)
+                )
+                st.altair_chart(_chart, use_container_width=True)
         with _tb:
-            st.markdown('<div class="section-header">Последние товарные знаки <span class="section-link">Все результаты →</span></div>', unsafe_allow_html=True)
-            _rl = {"high": ("Высокий", "pill-red"), "medium": ("Средний", "pill-amber")}
-            _rows = ""
-            for r in _recent[:5]:
-                lbl, cls = _rl.get(r["rl"], ("Низкий", "pill-green"))
-                dd = _parse_dt(r["ff"])
-                dstr = dd.strftime("%d.%m.%Y") if dd else "—"
-                src = SOURCE_LABELS.get(r["sc"], r["sc"])
-                _name = r["d"] or ""
-                _name_disp = (_name[:26] + "…") if len(_name) > 27 else _name
-                _rows += (
-                    f"<tr><td style='font-weight:600;max-width:180px;white-space:nowrap;"
-                    f"overflow:hidden;text-overflow:ellipsis;' title=\"{_name}\">{_name_disp}</td>"
-                    f"<td style='color:#64748B;white-space:nowrap;'>{src}</td>"
-                    f"<td style='color:#64748B;white-space:nowrap;'>{dstr}</td>"
-                    f"<td><span class='pill {cls}'>{lbl}</span></td></tr>")
-            if not _rows:
+            st.markdown('<div class="section-header">Последние товарные знаки</div>',
+                        unsafe_allow_html=True)
+            if not _recent:
                 st.info("Пока нет найденных знаков.")
             else:
-                st.markdown(f"""
-                <table class="ipw-table" style="table-layout:fixed;">
-                    <thead><tr><th>Товарный знак</th><th>Источник</th><th>Дата</th><th>Риск</th></tr></thead>
-                    <tbody>{_rows}</tbody>
-                </table>
-                """, unsafe_allow_html=True)
+                _rrows = []
+                for r in _recent[:5]:
+                    dd = _parse_dt(r["ff"])
+                    _rrows.append({
+                        "ID": r["id"],
+                        "Товарный знак": r["d"] or "—",
+                        "Источник": SOURCE_LABELS.get(r["sc"], r["sc"] or "—"),
+                        "Дата": dd.strftime("%d.%m.%Y") if dd else "—",
+                        "Риск": RISK_BADGE.get(r["rl"], "🟢 Низкий"),
+                    })
+                _rdf = pd.DataFrame(_rrows)
+                _sel_recent = st.dataframe(
+                    _rdf.drop(columns=["ID"]),
+                    use_container_width=True, hide_index=True,
+                    selection_mode="single-row", on_select="rerun",
+                    key="dash_recent_table", height=222,
+                )
+                _sr = _sel_recent.selection.rows if _sel_recent.selection else []
+                if _sr:
+                    _open_results(mark_id=_rrows[_sr[0]]["ID"])
+                st.caption("Нажмите на строку, чтобы открыть карточку знака.")
+                if st.button("Все результаты →", key="dash_all_results",
+                             use_container_width=True):
+                    _open_results()
 
         # Лента активности (из журнала событий)
-        st.markdown('<div class="section-header" style="margin-top:18px;">Лента активности <span class="section-link">Смотреть все →</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header" style="margin-top:18px;">Лента активности</div>',
+                    unsafe_allow_html=True)
         _events = _activity.get_events(owner_email=_own, limit=6)
         _act_html = ""
         for ev in _events:
@@ -1664,6 +1991,9 @@ if page == "🏠 Главная":
         if not _act_html:
             _act_html = "<div style='font-size:12px;color:#94A3B8;padding:6px 0;'>Пока нет событий</div>"
         st.markdown(f'<div class="card">{_act_html}</div>', unsafe_allow_html=True)
+        if "📖 Журнал действий" in _menu_items:
+            if st.button("Смотреть все события →", key="dash_all_activity"):
+                _goto("📖 Журнал действий")
 
 
 elif page == "🔍 Единый поиск":
@@ -2044,6 +2374,14 @@ elif page == "▶️ Запуск проверки":
 elif page == "📊 Результаты":
     st.title("Результаты мониторинга")
 
+    # ── Предзаполнение фильтров при переходе с дашборда ───────────────────────
+    _pf = st.session_state.pop("_res_prefill", None)
+    if _pf:
+        st.session_state["res_f_source"] = _pf.get("source") or ""
+        st.session_state["res_f_risk"] = _pf.get("risk") or ""
+        if _pf.get("profile"):
+            st.session_state["res_f_profile"] = _pf["profile"]
+
     # ── Фильтры ──
     with st.expander("🔽 Фильтры", expanded=True):
         fc1, fc2, fc3, fc4 = st.columns(4)
@@ -2052,6 +2390,7 @@ elif page == "📊 Результаты":
                 "Источник",
                 [""] + list(SOURCE_LABELS.keys()),
                 format_func=lambda x: "Все источники" if x == "" else SOURCE_LABELS.get(x, x),
+                key="res_f_source",
             )
             f_object = st.selectbox(
                 "Тип объекта",
@@ -2063,6 +2402,7 @@ elif page == "📊 Результаты":
                 "Риск",
                 [""] + list(RISK_LABELS.keys()),
                 format_func=lambda x: "Все уровни" if x == "" else RISK_LABELS.get(x, x),
+                key="res_f_risk",
             )
             f_legal = st.selectbox(
                 "Статус проверки",
@@ -2074,7 +2414,8 @@ elif page == "📊 Результаты":
             profiles = get_profiles()
             profile_map = {"": "Все профили"}
             profile_map.update({str(p["id"]): p["name"] for p in profiles})
-            f_profile = st.selectbox("Профиль", list(profile_map.keys()), format_func=lambda x: profile_map[x])
+            f_profile = st.selectbox("Профиль", list(profile_map.keys()),
+                                     format_func=lambda x: profile_map[x], key="res_f_profile")
         with fc4:
             f_in_report = st.selectbox("В отчёт", ["", "yes", "no"], format_func=lambda x: {
                 "": "Все", "yes": "Да", "no": "Нет"
@@ -2235,126 +2576,11 @@ elif page == "📊 Результаты":
         # Карточка знака при выборе строки
         sel_rows = selected.selection.rows if selected.selection else []
         if sel_rows:
+            st.session_state.pop("_open_mark_id", None)
             mark_id = rows[sel_rows[0]]["ID"]
             _show_mark_card(mark_id)
-
-
-def _show_mark_card(mark_id: int):
-    mark = get_mark_by_id(mark_id)
-    if not mark:
-        return
-
-    st.markdown("---")
-    st.markdown(f"## 📄 Карточка знака: **{mark['designation']}**")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.write(f"**Источник:** {SOURCE_LABELS.get(mark['source_code'], mark['source_code'])}")
-        st.write(f"**Тип объекта:** {OBJECT_TYPE_LABELS.get(mark['object_type'], mark['object_type'])}")
-        st.write(f"**Статус знака:** {STATUS_LABELS.get(mark['status_mark'], mark['status_mark'])}")
-        st.write(f"**№ заявки:** {mark['application_number'] or '—'}")
-        st.write(f"**№ регистрации:** {mark['registration_number'] or '—'}")
-    with col2:
-        st.write(f"**Правообладатель:** {mark['owner'] or '—'}")
-        st.write(f"**Адрес:** {mark['owner_address'] or '—'}")
-        st.write(f"**Классы МКТУ:** {mark['nice_classes_str'] or '—'}")
-        st.write(f"**Дата заявки:** {fmt_date(mark['application_date'])}")
-        st.write(f"**Дата регистрации:** {fmt_date(mark['registration_date'])}")
-        st.write(f"**Дата публикации:** {fmt_date(mark['publication_date'])}")
-    with col3:
-        risk_label = RISK_BADGE.get(mark["risk_level"], mark["risk_level"])
-        st.write(f"**Предварительный риск:** {risk_label}")
-        st.write(f"**Причина совпадения:** {mark['match_reason'] or '—'}")
-        st.write(f"**Первая фиксация:** {fmt_date(mark['first_found_at'])}")
-        st.write(f"**Последняя проверка:** {fmt_date(mark['last_checked_at'])}")
-        if mark["source_url"]:
-            st.write(f"**Ссылка:** [{mark['source_url']}]({mark['source_url']})")
-
-    if mark["goods_services"]:
-        st.write(f"**Товары/услуги:** {mark['goods_services']}")
-
-    # ── Срок оспаривания ──────────────────────────────────────────────────────
-    ct = calc_contestation(mark["registration_date"])
-    if ct["status"] != "unknown":
-        color_map = {"open": "#16a34a", "urgent": "#d97706", "expired": "#dc2626"}
-        bg_map    = {"open": "#f0fdf4", "urgent": "#fffbeb", "expired": "#fef2f2"}
-        border_map = {"open": "#bbf7d0", "urgent": "#fde68a", "expired": "#fecaca"}
-        color  = color_map.get(ct["status"], "#64748b")
-        bg     = bg_map.get(ct["status"], "#f8fafc")
-        border = border_map.get(ct["status"], "#e2e8f0")
-
-        if ct["status"] == "expired":
-            verdict = "Срок оспаривания истёк — аннулирование через суд затруднено"
-        elif ct["status"] == "urgent":
-            verdict = f"⚠️ Срочно! Осталось {ct['days_left']} дней — необходимо подать возражение"
-        else:
-            verdict = f"Можно подать возражение в НИИС до {ct['deadline']}"
-
-        st.markdown(f"""
-        <div style="border:1px solid {border};border-radius:10px;background:{bg};
-                    padding:14px 18px;margin:12px 0;">
-            <div style="font-size:13px;color:#64748b;margin-bottom:4px;font-weight:600;
-                        text-transform:uppercase;letter-spacing:0.5px;">
-                ⚖️ Срок оспаривания (5 лет с даты регистрации)
-            </div>
-            <div style="font-size:20px;font-weight:700;color:{color};">
-                {ct['label']} &nbsp;·&nbsp;
-                <span style="font-size:14px;font-weight:400;">до {ct['deadline']}</span>
-            </div>
-            <div style="font-size:13px;color:#475569;margin-top:4px;">{verdict}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("### ⚖️ Юридическая оценка")
-    with st.form(f"legal_form_{mark_id}"):
-        lc1, lc2, lc3 = st.columns(3)
-        with lc1:
-            new_risk = st.selectbox(
-                "Степень риска",
-                options=list(RISK_LABELS.keys()),
-                index=list(RISK_LABELS.keys()).index(mark["risk_level"]) if mark["risk_level"] in RISK_LABELS else 0,
-                format_func=lambda x: RISK_LABELS.get(x, x),
-            )
-            new_legal_status = st.selectbox(
-                "Статус проверки",
-                options=list(LEGAL_STATUS_LABELS.keys()),
-                index=list(LEGAL_STATUS_LABELS.keys()).index(mark["legal_status"]) if mark["legal_status"] in LEGAL_STATUS_LABELS else 0,
-                format_func=lambda x: LEGAL_STATUS_LABELS.get(x, x),
-            )
-        with lc2:
-            new_action = st.selectbox(
-                "Рекомендуемое действие",
-                options=["watch", "investigate", "prepare_position", "archive"],
-                index=["watch", "investigate", "prepare_position", "archive"].index(mark["recommended_action"] or "watch"),
-                format_func=lambda x: {
-                    "watch": "Наблюдать",
-                    "investigate": "Проверить подробнее",
-                    "prepare_position": "Подготовить позицию",
-                    "archive": "Архив",
-                }.get(x, x),
-            )
-            new_include = st.checkbox("Включить в отчёт", value=bool(mark["include_in_report"]))
-        with lc3:
-            new_recheck = st.checkbox("Требуется повторная проверка", value=bool(mark["recheck_needed"]))
-            new_comment = st.text_area("Комментарий юриста", value=mark["lawyer_comment"] or "", height=100)
-
-        if st.form_submit_button("💾 Сохранить оценку", type="primary"):
-            update_mark(
-                mark_id,
-                risk_level=new_risk,
-                legal_status=new_legal_status,
-                recommended_action=new_action,
-                include_in_report=1 if new_include else 0,
-                recheck_needed=1 if new_recheck else 0,
-                lawyer_comment=new_comment,
-            )
-            st.success("Оценка сохранена.")
-            st.rerun()
-
-
-# Регистрируем функцию глобально для таблицы результатов
-if page == "📊 Результаты":
-    pass  # функция _show_mark_card уже определена выше
+        elif st.session_state.get("_open_mark_id"):
+            _show_mark_card(int(st.session_state["_open_mark_id"]))
 
 
 # ─── БЮЛЛЕТЕНЬ ───────────────────────────────────────────────────────────────
