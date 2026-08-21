@@ -2087,11 +2087,26 @@ elif page == "🔍 Единый поиск":
         st.success(f"Сохранено в справочник: {_bin_msg}. Нажмите «Найти» ещё раз — "
                    "поиск пойдёт по этому наименованию.")
 
+    REGISTRY_OPTIONS = {
+        "trademark":         "Товарные знаки",
+        "well_known":        "Общеизвестные товарные знаки",
+        "invention":         "Изобретения",
+        "utility_model":     "Полезные модели",
+        "industrial_design": "Промышленные образцы",
+    }
+
     with st.form("unified_search"):
+        reg_type = st.selectbox(
+            "Реестр",
+            options=list(REGISTRY_OPTIONS.keys()),
+            format_func=lambda x: REGISTRY_OPTIONS[x],
+            help="Выберите реестр Kazpatent, как на сайте gosreestr.kazpatent.kz",
+        )
+        _is_patent = reg_type in ("invention", "utility_model", "industrial_design")
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
-                "Обозначение, номер регистрации, правообладатель или БИН",
+                "Название, номер, правообладатель или БИН",
                 placeholder="Например: SERGEK · 56289 · ТОО «Сергек Групп» · 123456789012",
             )
         with col_mode:
@@ -2100,15 +2115,17 @@ elif page == "🔍 Единый поиск":
                 options=["названию", "номеру", "правообладателю", "БИН"],
                 index=0,
                 horizontal=True,
-                help="«правообладателю» — все знаки компании; «БИН» — то же самое, "
+                help="«правообладателю» — все объекты компании; «БИН» — то же самое, "
                      "но по бизнес-идентификационному номеру",
             )
         col1, col2 = st.columns(2)
         with col1:
             search_registry_cb = st.checkbox("Реестр Kazpatent (все зарегистрированные)",
                                              value=False, key="us_src_registry")
-            search_bulletin_cb = st.checkbox("Бюллетень (новые публикации по годам)",
-                                             value=False, key="us_src_bulletin")
+            search_bulletin_cb = st.checkbox(
+                "Бюллетень (новые публикации по годам)",
+                value=False, key="us_src_bulletin", disabled=_is_patent,
+                help="Бюллетень доступен только для товарных знаков" if _is_patent else None)
         with col2:
             current_year = datetime.now().year
             years_available = list(range(2021, current_year + 1))
@@ -2116,6 +2133,7 @@ elif page == "🔍 Единый поиск":
                 "Годы бюллетеня",
                 options=years_available,
                 default=[],
+                disabled=_is_patent,
                 help="Выберите годы для поиска в бюллетене",
                 key="us_years",
             )
@@ -2194,34 +2212,44 @@ elif page == "🔍 Единый поиск":
                 try:
                     from scraper_kazpatent import search_trademarks
                     if by_owner or by_bin:
-                        # все знаки правообладателя из реестра товарных знаков
+                        # все объекты правообладателя из выбранного реестра
                         reg_results = search_trademarks(
                             query="", owner=owner_query,
-                            object_type="trademark", max_pages=10,
+                            object_type=reg_type, max_pages=10,
                         )
                     elif by_number:
                         reg_results = search_trademarks(
                             query="", reg_number=query,
-                            object_type="trademark", max_pages=2,
+                            object_type=reg_type, max_pages=2,
                         )
                     else:
-                        reg_results = search_trademarks(query, object_type="trademark", max_pages=5)
+                        reg_results = search_trademarks(query, object_type=reg_type, max_pages=5)
                     if reg_results:
-                        st.success(f"Найдено в реестре: **{len(reg_results)}** знаков")
+                        _obj_word = "объектов" if _is_patent else "знаков"
+                        st.success(f"Найдено в реестре «{REGISTRY_OPTIONS[reg_type]}»: "
+                                   f"**{len(reg_results)}** {_obj_word}")
                         for r in reg_results:
                             label = r.get("designation") or "(без словесного обозначения)"
                             reg_num = r.get("registration_number", "")
                             owner = r.get("owner", "")
-                            with st.expander(f"📌 {label[:60]}  |  Рег. № {reg_num}"):
+                            with st.expander(f"📌 {label[:60]}  |  № {reg_num}"):
                                 c1, c2 = st.columns(2)
                                 with c1:
-                                    st.write(f"**Рег. №:** {reg_num}")
+                                    st.write(f"**№ рег./охр. док.:** {reg_num or '—'}")
                                     st.write(f"**Заявка №:** {r.get('application_number', '—')}")
                                     st.write(f"**Дата рег.:** {r.get('registration_date', '—')}")
+                                    st.write(f"**Дата заявки:** {r.get('application_date', '—')}")
                                     st.write(f"**Статус:** {r.get('status_mark', '—')}")
                                 with c2:
-                                    st.write(f"**Правообладатель:** {owner[:150]}")
-                                    st.write(f"**Классы МКТУ:** {r.get('nice_classes', '—')}")
+                                    _own_lbl = "Патентообладатель" if _is_patent else "Правообладатель"
+                                    st.write(f"**{_own_lbl}:** {owner[:150] or '—'}")
+                                    if _is_patent:
+                                        _cls_lbl = "МКПО" if reg_type == "industrial_design" else "МПК"
+                                        st.write(f"**{_cls_lbl}:** {r.get('ipc_classes') or '—'}")
+                                        if r.get("authors"):
+                                            st.write(f"**Автор(ы):** {r['authors'][:200]}")
+                                    else:
+                                        st.write(f"**Классы МКТУ:** {r.get('nice_classes', '—')}")
                                 if r.get("source_url"):
                                     st.markdown(f"[🔗 Карточка в реестре]({r['source_url']})")
                     else:

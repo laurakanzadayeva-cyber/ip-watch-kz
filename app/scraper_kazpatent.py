@@ -15,20 +15,33 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://gosreestr.kazpatent.kz"
 SEARCH_ENDPOINTS = {
-    "trademark":     "/Trademark/TrademarksPartial",
-    "well_known":    "/TIM/TIMsPartial",
-    "international": "/InternationalTrademark/TrademarksPartial",
+    "trademark":         "/Trademark/TrademarksPartial",
+    "well_known":        "/TIM/TIMsPartial",
+    "international":      "/InternationalTrademark/TrademarksPartial",
+    "invention":         "/Invention/InventionsPartial",
+    "utility_model":     "/UtilityModel/UtilityModelsPartial",
+    "industrial_design": "/IndustrialModel/IndustrialModelsPartial",
 }
 DETAIL_ROUTES = {
-    "trademark":     "/Trademark/Details",
-    "well_known":    "/TIM/Details",
-    "international": "/InternationalTrademark/Details",
+    "trademark":         "/Trademark/Details",
+    "well_known":        "/TIM/Details",
+    "international":      "/InternationalTrademark/Details",
+    "invention":         "/Invention/Details",
+    "utility_model":     "/UtilityModel/Details",
+    "industrial_design": "/IndustrialModel/Details",
 }
 REESTR_TYPES = {
-    "trademark":     "Trademark",
-    "well_known":    "WellKnownTrademark",
-    "international": "InternationalTrademark",
+    "trademark":         "Trademark",
+    "well_known":        "WellKnownTrademark",
+    "international":      "InternationalTrademark",
+    "invention":         "Invention",
+    "utility_model":     "UtilityModel",
+    "industrial_design": "IndustrialModel",
 }
+
+# Реестры промышленной собственности (патенты) ищутся по названию/номеру/владельцу,
+# но не по классам МКТУ — у них своя классификация (МПК/МКПО)
+PATENT_TYPES = {"invention", "utility_model", "industrial_design"}
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -227,6 +240,7 @@ _LABEL_MAP = {
     "номер бюллетеня":       "bulletin_number",
     "владелец":              "owner",
     "правообладатель":       "owner",
+    "патентообладатель":     "owner",
     "заявитель":             "owner",
     "мкту":                  "nice_classes_raw",
     "классы мкту":           "nice_classes_raw",
@@ -236,6 +250,16 @@ _LABEL_MAP = {
     "статус":                "status_mark",
     "товары и услуги":       "goods_services",
     "срок действия":         "expiry_date",
+    # патентные реестры (изобретения, полезные модели, промобразцы)
+    "№ охранного документа": "registration_number",
+    "номер охранного документа": "registration_number",
+    "номер патента":         "registration_number",
+    "мпк":                   "ipc_raw",
+    "мкпо":                  "ipc_raw",
+    "индексы мпк":           "ipc_raw",
+    "автор(-ы)":             "authors",
+    "автор":                 "authors",
+    "авторы":                "authors",
 }
 
 
@@ -258,31 +282,36 @@ def _extract_card_data(card, object_type: str) -> dict | None:
         "owner": "",
         "owner_address": "",
         "nice_classes": [],
+        "ipc_classes": "",     # МПК/МКПО — классификация патентов
+        "authors": "",         # авторы изобретения/модели/образца
         "status_mark": "active",
         "goods_services": "",
         "source_url": "",
         "image_url": "",
     }
 
-    # Поля из sub-таблиц dxflItem_Material — каждая таблица = одно поле [label, value]
-    for ft in card.select("table.dxflItem_Material"):
-        rows = ft.find_all("tr")
-        for row in rows:
-            cells = row.find_all("td")
-            if len(cells) >= 2:
-                label = cells[0].get_text(strip=True).lower().rstrip(":")
-                value = cells[1].get_text(" ", strip=True)
-                if not value:
-                    continue
-                for key, field in _LABEL_MAP.items():
-                    if key in label:
-                        if field == "nice_classes_raw":
-                            data["nice_classes"] = _parse_classes(value)
-                        elif field == "status_mark":
-                            data["status_mark"] = _normalize_status(value)
-                        else:
-                            data[field] = value
-                        break
+    # Поля карточки: div.dxflItem_Material = подпись (dxflCaption) + значение (NestedControlCell).
+    # Универсально для товарных знаков и патентных реестров (изобретения, модели, образцы).
+    for item in card.select(".dxflItem_Material"):
+        cap = item.select_one(".dxflCaption_Material, .dxflCaptionCell_Material")
+        val = item.select_one(".dxflNestedControlCell_Material")
+        if not cap or not val:
+            continue
+        label = cap.get_text(" ", strip=True).lower().rstrip(":").strip()
+        value = val.get_text(" ", strip=True)
+        if not label or not value:
+            continue
+        for key, field in _LABEL_MAP.items():
+            if key in label:
+                if field == "nice_classes_raw":
+                    data["nice_classes"] = _parse_classes(value)
+                elif field == "ipc_raw":
+                    data["ipc_classes"] = value
+                elif field == "status_mark":
+                    data["status_mark"] = _normalize_status(value)
+                else:
+                    data[field] = value
+                break
 
     # Ссылка на карточку — в div.pull-right внутри той же карточки
     detail_route = DETAIL_ROUTES.get(object_type, "/Trademark/Details")
