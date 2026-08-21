@@ -24,7 +24,48 @@ def _get_supabase_creds():
     return url, key
 
 
+class DatabaseUnavailable(Exception):
+    """Не удалось достучаться до базы данных (сеть/Supabase недоступны)."""
+
+
+_SESSION = None
+_RETRIES = 3           # число попыток при обрыве соединения
+_RETRY_PAUSE = 1.2     # базовая пауза между попытками, сек
+
+
+def _get_session():
+    """HTTP-сессия с keep-alive и повторами на уровне транспорта."""
+    global _SESSION
+    if _SESSION is not None:
+        return _SESSION
+    import requests
+    from requests.adapters import HTTPAdapter
+    try:
+        from urllib3.util.retry import Retry
+        # повторы соединения делает _rpc, здесь — только повтор на 5xx/429,
+        # иначе задержки перемножаются
+        retry = Retry(
+            total=2,
+            connect=0,
+            read=0,
+            status=2,
+            backoff_factor=0.6,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(["POST", "GET"]),
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_maxsize=10)
+    except Exception:
+        adapter = HTTPAdapter(pool_maxsize=10)
+    sess = requests.Session()
+    sess.mount("https://", adapter)
+    sess.mount("http://", adapter)
+    _SESSION = sess
+    return _SESSION
+
+
 def _rpc(func_name: str, sql: str):
+    global _SESSION
+    import time
     import requests
     url, key = _get_supabase_creds()
     headers = {
@@ -32,12 +73,28 @@ def _rpc(func_name: str, sql: str):
         "Authorization": "Bearer " + key,
         "Content-Type": "application/json",
     }
-    resp = requests.post(
-        f"{url}/rest/v1/rpc/{func_name}",
-        headers=headers,
-        json={"sql": sql},
-        timeout=30,
-    )
+    last_err = None
+    for attempt in range(_RETRIES):
+        try:
+            resp = _get_session().post(
+                f"{url}/rest/v1/rpc/{func_name}",
+                headers=headers,
+                json={"sql": sql},
+                timeout=(10, 30),  # connect, read
+            )
+            break
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            last_err = e
+            _SESSION = None  # пересоздаём сессию: соединение из пула могло протухнуть
+            if attempt < _RETRIES - 1:
+                time.sleep(_RETRY_PAUSE * (attempt + 1))
+    else:
+        raise DatabaseUnavailable(
+            "Нет связи с базой данных (Supabase). "
+            f"Попыток: {_RETRIES}. Последняя ошибка: {last_err}"
+        ) from last_err
+
     if not resp.ok:
         try:
             detail = resp.json()

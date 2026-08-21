@@ -89,10 +89,15 @@ if _auth_required and "auth_user" not in st.session_state:
     except Exception:
         _tok = None
     if _tok:
-        _remembered = _auth.get_session_user(_tok)
+        try:
+            _remembered = _auth.get_session_user(_tok)
+        except Exception as _sess_err:
+            # база временно недоступна — не роняем приложение, покажем экран входа
+            _remembered = None
+            st.session_state["_db_error"] = str(_sess_err)
         if _remembered:
             st.session_state["auth_user"] = _remembered
-        else:
+        elif not st.session_state.get("_db_error"):
             # cookie указывает на уничтоженную/истёкшую сессию — убираем
             _clear_session_cookie()
 
@@ -140,6 +145,9 @@ def _render_auth_gate():
     _render_auth_header()
     _spacer_l, _center, _spacer_r = st.columns([1, 1.4, 1])
     with _center:
+        if st.session_state.pop("_db_error", None):
+            st.warning("⚠️ База данных отвечала с задержкой. Если вход не проходит — "
+                       "подождите минуту и попробуйте ещё раз.")
         tab_login, tab_register = st.tabs(["🔑 Вход", "📝 Регистрация"])
 
         # ── Вход ──────────────────────────────────────────────────────────────
@@ -150,7 +158,14 @@ def _render_auth_gate():
                 remember = st.checkbox("Запомнить меня", value=True, key="login_remember")
                 submitted = st.form_submit_button("Войти", use_container_width=True, type="primary")
             if submitted:
-                user = _auth.verify_login(email, password)
+                try:
+                    user = _auth.verify_login(email, password)
+                except Exception as _login_err:
+                    user = None
+                    st.error("Не удалось связаться с базой данных. "
+                             "Подождите минуту и попробуйте войти снова.")
+                    st.caption(f"Техническая информация: {_login_err}")
+                    st.stop()
                 if user:
                     st.session_state["auth_user"] = user
                     if remember:
@@ -172,7 +187,11 @@ def _render_auth_gate():
                     r_pwd = st.text_input("Пароль (мин. 6 символов)", type="password", key="reg_pwd")
                     r_submit = st.form_submit_button("Зарегистрироваться", use_container_width=True, type="primary")
                 if r_submit:
-                    res = _auth.register_start(r_name, r_email, r_pwd)
+                    try:
+                        res = _auth.register_start(r_name, r_email, r_pwd)
+                    except Exception as _reg_err:
+                        res = {"ok": False,
+                               "error": f"База данных временно недоступна: {_reg_err}"}
                     if res["ok"]:
                         st.session_state["reg_stage"] = "confirm"
                         st.session_state["reg_pending_email"] = r_email.strip().lower()
