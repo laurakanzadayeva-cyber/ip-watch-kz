@@ -258,6 +258,7 @@ init_db()
 SOURCE_LABELS = {
     "kz_registry": "Реестр KZ",
     "kz_bulletin": "Бюллетень KZ",
+    "copyright_kz": "Авторское право",
     "wipo": "WIPO",
     "madrid": "Madrid",
     "manual": "Добавлено вручную",
@@ -266,6 +267,10 @@ OBJECT_TYPE_LABELS = {
     "trademark": "Товарный знак",
     "well_known": "Общеизвестный ТЗ",
     "trade_name": "Фирменное наименование",
+    "invention": "Изобретение",
+    "utility_model": "Полезная модель",
+    "industrial_design": "Промышленный образец",
+    "copyright": "Объект авторского права",
 }
 STATUS_LABELS = {
     "active": "Действует",
@@ -2364,7 +2369,10 @@ elif page == "📋 Профили мониторинга":
                             ).fetchall()
                         if variants:
                             st.write(f"**Варианты:** {', '.join(v['variant'] for v in variants)}")
-                        _sm_label = {"owner": "По правообладателю", "strict": "Строгий",
+                        _sm_label = {"owner": "По правообладателю",
+                                     "copyright_author": "Авт. право: по автору",
+                                     "copyright_title": "Авт. право: по названию",
+                                     "strict": "Строгий",
                                      "normal": "Обычный", "wide": "Широкий"}.get(
                                          p['search_mode'], p['search_mode'])
                         st.write(f"**Режим поиска:** {_sm_label}")
@@ -2410,78 +2418,105 @@ elif page == "📋 Профили мониторинга":
 
         _ptype = st.radio(
             "Что отслеживаем",
-            options=["обозначение", "правообладателя"],
+            options=["обозначение", "правообладателя", "авторское право"],
             horizontal=True,
             key="_new_profile_type",
-            help="«правообладателя» — в профиль попадают все знаки указанной компании "
-                 "(её портфель целиком), без оценки сходства",
+            help="«правообладателя» — все знаки компании; «авторское право» — "
+                 "новые свидетельства по автору или названию произведения",
         )
         _owner_mode = (_ptype == "правообладателя")
+        _copyright_mode = (_ptype == "авторское право")
+        _cp_by = "author"
+        if _copyright_mode:
+            _cp_choice = st.radio(
+                "Отслеживать по",
+                options=["автору / правообладателю", "названию произведения"],
+                horizontal=True, key="_new_cp_by",
+            )
+            _cp_by = "author" if _cp_choice.startswith("автору") else "title"
 
         # Превью авто-вариантов (вне формы, динамически)
         _prev_desig = st.session_state.get("_prev_desig_input", "")
-        _prev_input = st.text_input(
-            "Наименование правообладателя *" if _owner_mode else "Основное обозначение *",
-            key="_prev_desig_input",
-            placeholder=("Сергек Групп — достаточно части названия"
-                         if _owner_mode
-                         else "СЕРГЕК или SERGEK — система добавит оба варианта автоматически"),
-        )
-        _auto = [] if _owner_mode else _auto_variants(_prev_input)
+        if _copyright_mode:
+            _prev_lbl = ("Автор / правообладатель *" if _cp_by == "author"
+                         else "Название произведения *")
+            _prev_ph = ("Фамилия автора или наименование правообладателя"
+                        if _cp_by == "author" else "Часть названия произведения")
+        elif _owner_mode:
+            _prev_lbl, _prev_ph = "Наименование правообладателя *", "Сергек Групп — достаточно части названия"
+        else:
+            _prev_lbl, _prev_ph = "Основное обозначение *", "СЕРГЕК или SERGEK — система добавит оба варианта автоматически"
+        _prev_input = st.text_input(_prev_lbl, key="_prev_desig_input", placeholder=_prev_ph)
+        _auto = [] if (_owner_mode or _copyright_mode) else _auto_variants(_prev_input)
         if _auto:
             st.info(f"🔄 Система автоматически добавит варианты: **{', '.join(_auto)}**")
         if _owner_mode:
             st.caption("Поиск идёт по реестру товарных знаков Kazpatent. Бюллетень и реестр "
                        "общеизвестных знаков фильтр по правообладателю не поддерживают.")
+        if _copyright_mode:
+            st.caption("Мониторинг реестра авторских прав (copyright.kazpatent.kz): "
+                       "система отслеживает новые свидетельства по выбранному критерию.")
 
         with st.form("create_profile"):
             name = st.text_input("Название профиля *", placeholder="Мониторинг основного бренда")
             main_designation = st.text_input(
-                "Наименование правообладателя *" if _owner_mode else "Основное обозначение *",
-                value=_prev_input,
-                placeholder=("Введите наименование компании-правообладателя"
-                             if _owner_mode else "Введите обозначение товарного знака"),
+                _prev_lbl, value=_prev_input, placeholder=_prev_ph,
             )
             variants_raw = st.text_area(
-                ("Другие написания наименования (каждое с новой строки)"
-                 if _owner_mode else "Дополнительные варианты (каждый с новой строки)"),
+                ("Другие варианты (каждый с новой строки)"
+                 if (_owner_mode or _copyright_mode)
+                 else "Дополнительные варианты (каждый с новой строки)"),
                 placeholder="Сергек Медиа\nSergek Media\nБИ АЙ ГРУПП\n— авто-варианты добавятся сами",
             )
-            col1, col2 = st.columns(2)
-            with col1:
-                object_types = st.multiselect(
-                    "Типы объектов",
-                    options=["trademark", "well_known"],
-                    default=[],
-                    format_func=lambda x: OBJECT_TYPE_LABELS.get(x, x),
-                )
-                if _owner_mode:
-                    search_mode = "owner"
-                    st.text_input("Режим поиска", value="По правообладателю", disabled=True)
-                else:
-                    search_mode = st.selectbox(
-                        "Режим поиска",
-                        options=["strict", "normal", "wide"],
-                        index=1,
-                        format_func=lambda x: {"strict": "Строгий", "normal": "Обычный",
-                                               "wide": "Широкий"}[x],
+            if _copyright_mode:
+                # для авторского права источник и классы фиксированы
+                object_types = ["copyright"]
+                nice_classes = "all"
+                sources = ["copyright_kz"]
+                search_mode = "copyright_author" if _cp_by == "author" else "copyright_title"
+                st.text_input("Источник", value="Реестр авторских прав", disabled=True)
+                st.text_input("Режим", value=("По автору/правообладателю"
+                                              if _cp_by == "author" else "По названию произведения"),
+                              disabled=True)
+                excluded_owners = ""
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    object_types = st.multiselect(
+                        "Типы объектов",
+                        options=["trademark", "well_known"],
+                        default=[],
+                        format_func=lambda x: OBJECT_TYPE_LABELS.get(x, x),
                     )
-            with col2:
-                sources = st.multiselect(
-                    "Источники",
-                    options=["kz_registry", "kz_bulletin", "wipo", "madrid"],
-                    default=[],
-                    format_func=lambda x: SOURCE_LABELS.get(x, x),
-                )
-                nice_classes = st.text_input("Классы МКТУ", value="all", help="'all' — все классы, или через запятую: 9,35,42")
-            excluded_owners = st.text_input("Исключаемые правообладатели", placeholder="Serge Group, SGT KZ")
+                    if _owner_mode:
+                        search_mode = "owner"
+                        st.text_input("Режим поиска", value="По правообладателю", disabled=True)
+                    else:
+                        search_mode = st.selectbox(
+                            "Режим поиска",
+                            options=["strict", "normal", "wide"],
+                            index=1,
+                            format_func=lambda x: {"strict": "Строгий", "normal": "Обычный",
+                                                   "wide": "Широкий"}[x],
+                        )
+                with col2:
+                    sources = st.multiselect(
+                        "Источники",
+                        options=["kz_registry", "kz_bulletin", "wipo", "madrid"],
+                        default=[],
+                        format_func=lambda x: SOURCE_LABELS.get(x, x),
+                    )
+                    nice_classes = st.text_input("Классы МКТУ", value="all", help="'all' — все классы, или через запятую: 9,35,42")
+            if not _copyright_mode:
+                excluded_owners = st.text_input("Исключаемые правообладатели", placeholder="Serge Group, SGT KZ")
             comment = st.text_area("Комментарий", height=80)
 
             submitted = st.form_submit_button("✅ Создать профиль", type="primary")
             if submitted:
                 if not name or not main_designation:
                     st.error("Заполните обязательные поля: «Название профиля» и "
-                             + ("«Наименование правообладателя»." if _owner_mode
+                             + ("«Автор/название»." if _copyright_mode
+                                else "«Наименование правообладателя»." if _owner_mode
                                 else "«Основное обозначение»."))
                 else:
                     with get_connection() as conn:
@@ -2510,7 +2545,7 @@ elif page == "📋 Профили мониторинга":
                             profile_id = row[0] if row else None
 
                         # Авто-варианты (транслитерация) — только по обозначению
-                        all_variants = [] if _owner_mode else list(_auto_variants(main_designation))
+                        all_variants = [] if (_owner_mode or _copyright_mode) else list(_auto_variants(main_designation))
                         # Пользовательские варианты
                         for variant in variants_raw.strip().splitlines():
                             v = variant.strip()
@@ -2522,7 +2557,7 @@ elif page == "📋 Профили мониторинга":
                                 (profile_id, v),
                             )
                         conn.commit()
-                    _auto_added = [] if _owner_mode else _auto_variants(main_designation)
+                    _auto_added = [] if (_owner_mode or _copyright_mode) else _auto_variants(main_designation)
                     auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_added)}." if _auto_added else ""
                     st.success(f"Профиль «{name}» создан.{auto_msg}")
                     _log("profile_created", detail=name)

@@ -38,7 +38,11 @@ def run_monitoring(
         profile_name = profile["main_designation"]
         _profile_owner = profile["owner_email"] if "owner_email" in profile.keys() else None
         # режим «по правообладателю»: в main_designation хранится наименование владельца
-        _is_owner_mode = (profile["search_mode"] or "") == "owner"
+        _mode = profile["search_mode"] or ""
+        _is_owner_mode = _mode == "owner"
+        # режимы авторского права: следим по автору или по названию произведения
+        _is_copyright = _mode in ("copyright_author", "copyright_title")
+        _cp_by = "author" if _mode == "copyright_author" else "title"
         # персональный Telegram владельца профиля (пусто — уведомления не шлём)
         try:
             from user_settings import telegram_config_for
@@ -52,8 +56,36 @@ def run_monitoring(
             found_count = 0
             new_count = 0
 
+            # авторское право мониторится только своим источником
+            if _is_copyright and source["code"] != "copyright_kz":
+                _finish_run(conn, run_id, "success", 0, 0)
+                continue
+            if not _is_copyright and source["code"] == "copyright_kz":
+                _finish_run(conn, run_id, "success", 0, 0)
+                continue
+
             try:
-                if _is_owner_mode:
+                if _is_copyright:
+                    # Свидетельства авторского права по автору или названию
+                    for term in all_designations:
+                        for cand in _fetch_copyright_candidates(term, _cp_by):
+                            result = {
+                                "reason": (f"Свидетельство по "
+                                           + ("автору" if _cp_by == "author" else "названию")
+                                           + f" «{term}»"),
+                                "risk_level": "informational",
+                                "is_match": True, "score": 100,
+                            }
+                            is_new = _save_mark(conn, profile["id"], "copyright_kz",
+                                                cand, result, _profile_owner)
+                            found_count += 1
+                            if is_new:
+                                new_count += 1
+                                new_marks_all.append({**cand, **result})
+                                if _tg_cfg or tg_configured():
+                                    notify_new_mark(profile_name, cand, result,
+                                                    cfg=_tg_cfg or None)
+                elif _is_owner_mode:
                     # Профиль следит за портфелем правообладателя: берём все его знаки
                     candidates = _fetch_owner_candidates(source["code"], all_designations)
                     for candidate in candidates:
@@ -154,6 +186,35 @@ def _fetch_candidates(source_code: str, designations: list[str]) -> list[dict]:
             logger.warning(f"Ошибка при поиске '{designation}' в {source_code}: {e}")
             # Продолжаем с другими обозначениями, не прерываем весь мониторинг
     return candidates
+
+
+def _fetch_copyright_candidates(term: str, by: str) -> list[dict]:
+    """Свидетельства авторского права по автору/названию → формат found_marks."""
+    try:
+        from scraper_copyright import search as _cp_search
+        rows = _cp_search(term, by=by)
+    except Exception as e:
+        logger.warning(f"Авторское право '{term}' ({by}): {e}")
+        return []
+    out = []
+    for r in rows:
+        out.append({
+            "source_code": "copyright_kz",
+            "object_type": "copyright",
+            "designation": r.get("title", "") or "(без названия)",
+            "registration_number": r.get("cert_number", ""),
+            "application_number": r.get("application_number", ""),
+            "application_date": r.get("application_date", ""),
+            "registration_date": r.get("publication_date", ""),
+            "publication_date": r.get("publication_date", ""),
+            "owner": r.get("authors", ""),
+            "owner_address": "",
+            "status_mark": "active" if "ейств" in (r.get("status") or "").lower() else "unknown",
+            "goods_services": r.get("object_type", ""),
+            "source_url": r.get("source_url", "https://copyright.kazpatent.kz/"),
+            "nice_classes": [],
+        })
+    return out
 
 
 def _fetch_owner_candidates(source_code: str, owners: list[str]) -> list[dict]:

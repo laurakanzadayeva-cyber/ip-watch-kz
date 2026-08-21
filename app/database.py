@@ -138,6 +138,7 @@ def init_db():
     INSERT OR IGNORE INTO sources (code, name, url, status) VALUES
         ('kz_registry', 'Реестр Kazpatent', 'https://gosreestr.kazpatent.kz/', 'active'),
         ('kz_bulletin', 'Бюллетень Kazpatent', 'https://kazpatent.kz/ru/electronic-bulletin', 'active'),
+        ('copyright_kz', 'Реестр авторских прав', 'https://copyright.kazpatent.kz/', 'active'),
         ('wipo', 'WIPO Global Brand Database', 'https://branddb.wipo.int/', 'planned'),
         ('madrid', 'Madrid Monitor', 'https://www.wipo.int/madrid/monitor/en/', 'planned');
     """)
