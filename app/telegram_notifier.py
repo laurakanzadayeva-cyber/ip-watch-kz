@@ -45,9 +45,13 @@ def is_configured() -> bool:
     return bool(cfg.get("bot_token") and cfg.get("chat_id"))
 
 
-def send_message(text: str, parse_mode: str = "HTML") -> bool:
-    """Отправляет сообщение в Telegram. Возвращает True при успехе."""
-    cfg = _load_config()
+def send_message(text: str, parse_mode: str = "HTML", cfg: dict | None = None) -> bool:
+    """Отправляет сообщение в Telegram. Возвращает True при успехе.
+
+    cfg: {'bot_token', 'chat_id'} — персональные настройки пользователя;
+    если не передан, берётся общая конфигурация приложения.
+    """
+    cfg = cfg or _load_config()
     token = cfg.get("bot_token", "")
     chat_id = cfg.get("chat_id", "")
 
@@ -71,7 +75,8 @@ def send_message(text: str, parse_mode: str = "HTML") -> bool:
         return False
 
 
-def notify_new_mark(profile_name: str, candidate: dict, match_result: dict) -> bool:
+def notify_new_mark(profile_name: str, candidate: dict, match_result: dict,
+                    cfg: dict | None = None) -> bool:
     """Формирует и отправляет уведомление о новом найденном знаке."""
     risk = match_result.get("risk_level", "")
     risk_icons = {"high": "🔴", "medium": "🟡", "low": "🟢"}
@@ -109,10 +114,11 @@ def notify_new_mark(profile_name: str, candidate: dict, match_result: dict) -> b
         lines.append(f"\nПричина: {match_result['reason']}")
 
     text = "\n".join(lines)
-    return send_message(text)
+    return send_message(text, cfg=cfg)
 
 
-def notify_monitoring_summary(summary: dict, new_marks: list[dict]) -> bool:
+def notify_monitoring_summary(summary: dict, new_marks: list[dict],
+                              cfg: dict | None = None) -> bool:
     """
     Итоговое уведомление после завершения мониторинга.
     Отправляется только если найдены новые совпадения.
@@ -138,12 +144,12 @@ def notify_monitoring_summary(summary: dict, new_marks: list[dict]) -> bool:
         if len(new_marks) > 10:
             lines.append(f"  ... и ещё {len(new_marks) - 10}")
 
-    return send_message("\n".join(lines))
+    return send_message("\n".join(lines), cfg=cfg)
 
 
-def test_connection() -> tuple[bool, str]:
+def test_connection(cfg: dict | None = None) -> tuple[bool, str]:
     """Проверяет соединение с ботом. Возвращает (ok, message)."""
-    cfg = _load_config()
+    cfg = cfg or _load_config()
     token = cfg.get("bot_token", "")
     chat_id = cfg.get("chat_id", "")
 
@@ -160,7 +166,7 @@ def test_connection() -> tuple[bool, str]:
         bot_name = r.json()["result"].get("username", "bot")
 
         # Отправляем тестовое сообщение
-        ok = send_message("✅ IP Watch KZ подключён к Telegram-боту!")
+        ok = send_message("✅ IP Watch KZ подключён к Telegram-боту!", cfg=cfg)
         if ok:
             return True, f"Бот @{bot_name} подключён, тестовое сообщение отправлено"
         return False, f"Бот @{bot_name} найден, но сообщение не доставлено (проверьте chat_id)"

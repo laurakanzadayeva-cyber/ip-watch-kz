@@ -41,6 +41,11 @@ from datetime import timedelta
 if not st.session_state.get("_auth_schema_ready"):
     _auth.ensure_auth_schema()
     _activity.ensure_events_schema()
+    try:
+        from bin_lookup import ensure_bin_schema as _ensure_bin_schema
+        _ensure_bin_schema()
+    except Exception:
+        pass
     st.session_state["_auth_schema_ready"] = True
 
 
@@ -2077,42 +2082,109 @@ elif page == "🔍 Единый поиск":
     st.title("Единый поиск по реестру и бюллетеню")
     st.markdown("Введите обозначение — система проверит реестр Kazpatent и бюллетени за выбранные годы.")
 
+    _bin_msg = st.session_state.pop("_bin_saved_msg", None)
+    if _bin_msg:
+        st.success(f"Сохранено в справочник: {_bin_msg}. Нажмите «Найти» ещё раз — "
+                   "поиск пойдёт по этому наименованию.")
+
     with st.form("unified_search"):
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
-                "Обозначение, номер регистрации или правообладатель",
-                placeholder="Например: SERGEK · 56289 · ТОО «Сергек Групп»",
+                "Обозначение, номер регистрации, правообладатель или БИН",
+                placeholder="Например: SERGEK · 56289 · ТОО «Сергек Групп» · 123456789012",
             )
         with col_mode:
             search_mode = st.radio(
                 "Искать по",
-                options=["названию", "номеру", "правообладателю"],
+                options=["названию", "номеру", "правообладателю", "БИН"],
                 index=0,
                 horizontal=True,
-                help="«правообладателю» — все знаки конкретной компании "
-                     "(как выписка из реестра по владельцу)",
+                help="«правообладателю» — все знаки компании; «БИН» — то же самое, "
+                     "но по бизнес-идентификационному номеру",
             )
         col1, col2 = st.columns(2)
         with col1:
-            search_registry_cb = st.checkbox("Реестр Kazpatent (все зарегистрированные)", value=True)
-            search_bulletin_cb = st.checkbox("Бюллетень (новые публикации по годам)", value=True)
+            search_registry_cb = st.checkbox("Реестр Kazpatent (все зарегистрированные)",
+                                             value=False, key="us_src_registry")
+            search_bulletin_cb = st.checkbox("Бюллетень (новые публикации по годам)",
+                                             value=False, key="us_src_bulletin")
         with col2:
             current_year = datetime.now().year
             years_available = list(range(2021, current_year + 1))
             selected_years = st.multiselect(
                 "Годы бюллетеня",
                 options=years_available,
-                default=[current_year - 1, current_year],
+                default=[],
                 help="Выберите годы для поиска в бюллетене",
+                key="us_years",
             )
         submitted = st.form_submit_button("🔍 Найти", type="primary")
 
-    if submitted and query.strip():
+    # ── БИН не раскрылся автоматически: просим название один раз и запоминаем ──
+    if st.session_state.get("_bin_pending"):
+        _pend_bin = st.session_state["_bin_pending"]
+        if st.session_state.get("_bin_error"):
+            st.warning(st.session_state["_bin_error"])
+        with st.form("bin_manual"):
+            st.markdown(f"**БИН {_pend_bin}** — укажите наименование компании, "
+                        "система запомнит его и в следующий раз найдёт сразу.")
+            _bm1, _bm2 = st.columns([3, 2])
+            with _bm1:
+                _bin_name = st.text_input(
+                    "Наименование правообладателя",
+                    placeholder='ТОО «Сергек Групп» — как в реестре Kazpatent',
+                )
+            with _bm2:
+                _bin_addr = st.text_input("Адрес (необязательно)")
+            _bc1, _bc2 = st.columns(2)
+            with _bc1:
+                _bin_save = st.form_submit_button("💾 Сохранить и искать", type="primary")
+            with _bc2:
+                _bin_cancel = st.form_submit_button("Отмена")
+        if _bin_save and _bin_name.strip():
+            from bin_lookup import save_to_directory
+            save_to_directory(_pend_bin, _bin_name, _bin_addr, note="введено вручную")
+            st.session_state.pop("_bin_pending", None)
+            st.session_state.pop("_bin_error", None)
+            st.session_state["_bin_saved_msg"] = f"{_pend_bin} — {_bin_name.strip()}"
+            _log("profile_updated", "Справочник БИН пополнен",
+                 detail=f"{_pend_bin} — {_bin_name.strip()}")
+            st.rerun()
+        elif _bin_cancel:
+            st.session_state.pop("_bin_pending", None)
+            st.session_state.pop("_bin_error", None)
+            st.rerun()
+
+    if submitted and query.strip() and not (search_registry_cb or search_bulletin_cb):
+        st.warning("Отметьте, где искать: «Реестр Kazpatent» и/или «Бюллетень».")
+    elif submitted and query.strip():
         query = query.strip()
+        by_bin = (search_mode == "БИН")
         by_owner = (search_mode == "правообладателю")
         # Автодетект: если запрос состоит только из цифр — переключаем на поиск по номеру
-        by_number = not by_owner and ((search_mode == "номеру") or query.isdigit())
+        by_number = not by_owner and not by_bin and (
+            (search_mode == "номеру") or query.isdigit())
+
+        # ── БИН → наименование компании ──
+        owner_query = query if by_owner else ""
+        if by_bin:
+            from bin_lookup import lookup_company_by_bin, is_valid_bin
+            if not is_valid_bin(query):
+                st.error("БИН должен состоять ровно из 12 цифр.")
+                st.stop()
+            _bin_info = lookup_company_by_bin(query)
+            if _bin_info.get("name"):
+                owner_query = _bin_info["name"]
+                st.success(f"БИН **{query}** — {owner_query}"
+                           + (f"  ·  источник: {_bin_info['source']}" if _bin_info.get("source") else ""))
+                if _bin_info.get("address"):
+                    st.caption(f"Адрес: {_bin_info['address']}")
+            else:
+                st.session_state["_bin_pending"] = query
+                st.session_state["_bin_error"] = _bin_info.get(
+                    "error", "Компания по БИН не найдена.")
+                st.rerun()
 
         # ── Реестр ──
         if search_registry_cb:
@@ -2120,10 +2192,10 @@ elif page == "🔍 Единый поиск":
             with st.spinner("Поиск в реестре..."):
                 try:
                     from scraper_kazpatent import search_trademarks
-                    if by_owner:
+                    if by_owner or by_bin:
                         # все знаки правообладателя из реестра товарных знаков
                         reg_results = search_trademarks(
-                            query="", owner=query,
+                            query="", owner=owner_query,
                             object_type="trademark", max_pages=10,
                         )
                     elif by_number:
@@ -2136,7 +2208,7 @@ elif page == "🔍 Единый поиск":
                     if reg_results:
                         st.success(f"Найдено в реестре: **{len(reg_results)}** знаков")
                         for r in reg_results:
-                            label = r.get("designation") or query
+                            label = r.get("designation") or "(без словесного обозначения)"
                             reg_num = r.get("registration_number", "")
                             owner = r.get("owner", "")
                             with st.expander(f"📌 {label[:60]}  |  Рег. № {reg_num}"):
@@ -2157,10 +2229,12 @@ elif page == "🔍 Единый поиск":
                     st.error(f"Ошибка реестра: {e}")
 
         # ── Бюллетень ──
-        if search_bulletin_cb and by_owner:
+        if search_bulletin_cb and (by_owner or by_bin):
             st.info("Поиск по правообладателю выполнен по реестру товарных знаков Kazpatent. "
                     "Бюллетень ищет только по обозначению, а реестр общеизвестных знаков "
                     "фильтр по владельцу не поддерживает — такие знаки ищите по обозначению.")
+        elif search_bulletin_cb and not selected_years:
+            st.warning("Для поиска по бюллетеню выберите хотя бы один год.")
         elif search_bulletin_cb and selected_years:
             st.markdown("### 📰 Бюллетень Kazpatent")
             from scraper_bulletin import search_bulletin as search_bulletin_fn, get_issue_dates
@@ -3931,38 +4005,92 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
         if creds["gemini"]:
             st.success("✅ Gemini AI настроен")
 
-    from telegram_notifier import is_configured as tg_is_configured, test_connection as tg_test, reload_config as tg_reload
-    tg_ok = tg_is_configured()
-    with st.expander("Telegram-уведомления", expanded=not tg_ok):
+    # ── Telegram: персонально для каждого пользователя ────────────────────────
+    from telegram_notifier import (is_configured as tg_is_configured,
+                                   test_connection as tg_test,
+                                   reload_config as tg_reload)
+    import user_settings as _us
+
+    _us.ensure_user_settings_schema()
+    _me = (_current_user.get("email") or "").strip().lower()
+    _my_tg = _us.get_settings(_me)
+    _shared_token = _us._shared_bot_token()
+    _my_ready = bool(_us.telegram_config_for(_me))
+
+    with st.expander("Telegram-уведомления (личные)", expanded=not _my_ready):
+        _bot_link = ("[@IPWatchKZBot](https://t.me/IPWatchKZBot)" if _shared_token
+                     else "вашему боту (создайте через [@BotFather](https://t.me/BotFather))")
         st.markdown(
-            "Получайте уведомления в Telegram когда мониторинг находит новые совпадения.\n\n"
-            "**Инструкция:**\n"
-            "1. Создайте бота через [@BotFather](https://t.me/BotFather) — получите токен\n"
+            "Уведомления о новых совпадениях приходят **лично вам** — только по вашим "
+            "профилям мониторинга.\n\n"
+            "**Как подключить:**\n"
+            f"1. Напишите `/start` боту {_bot_link}\n"
             "2. Узнайте свой Telegram ID через [@userinfobot](https://t.me/userinfobot)\n"
-            "3. Напишите боту `/start` (иначе он не сможет вам писать)\n"
+            "3. Впишите ID ниже и включите уведомления\n"
         )
-        with st.form("telegram_creds"):
-            tg_token = st.text_input("Bot Token (от @BotFather)", type="password",
-                                     help="Вид: 1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw")
-            tg_chat = st.text_input("Ваш Telegram ID (от @userinfobot)",
-                                    help="Числовой ID, например: 123456789")
-            tg_submitted = st.form_submit_button("💾 Сохранить настройки Telegram")
-            if tg_submitted:
-                if tg_token and tg_chat:
-                    save_credentials({"telegram": {"bot_token": tg_token, "chat_id": tg_chat}})
-                    tg_reload()
-                    st.success("Настройки Telegram сохранены!")
-                    st.rerun()
-                else:
-                    st.error("Заполните оба поля.")
-        if tg_ok:
-            st.success("✅ Telegram настроен")
-            if st.button("📨 Отправить тестовое сообщение"):
-                ok, msg = tg_test()
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
+        if not _shared_token:
+            st.info("Общий бот приложения не настроен — укажите токен своего бота "
+                    "в поле ниже (администратор может задать общий бот в secrets).")
+
+        with st.form("telegram_user_settings"):
+            _tc1, _tc2 = st.columns([2, 1])
+            with _tc1:
+                _my_chat = st.text_input(
+                    "Ваш Telegram ID", value=_my_tg["telegram_chat_id"],
+                    help="Числовой ID от @userinfobot, например: 123456789",
+                )
+            with _tc2:
+                _my_enabled = st.checkbox("Включить уведомления",
+                                          value=bool(_my_tg["telegram_enabled"]))
+            _my_token = st.text_input(
+                "Свой Bot Token (необязательно)",
+                value=_my_tg["telegram_bot_token"], type="password",
+                help="Оставьте пустым, чтобы получать сообщения от общего бота приложения",
+            )
+            _tg_save = st.form_submit_button("💾 Сохранить", type="primary")
+        if _tg_save:
+            if _my_enabled and not _my_chat.strip():
+                st.error("Укажите Telegram ID — без него бот не сможет вам написать.")
+            else:
+                _us.save_settings(_me,
+                                  telegram_chat_id=_my_chat.strip(),
+                                  telegram_bot_token=_my_token.strip(),
+                                  telegram_enabled=1 if _my_enabled else 0)
+                st.success("Настройки Telegram сохранены.")
+                st.rerun()
+
+        if _my_ready:
+            st.success("✅ Ваш Telegram подключён")
+            if st.button("📨 Отправить тестовое сообщение", key="tg_test_me"):
+                ok, msg = tg_test(_us.telegram_config_for(_me))
+                (st.success if ok else st.error)(msg)
+        elif _my_tg["telegram_chat_id"] and not _my_tg["telegram_enabled"]:
+            st.caption("Уведомления выключены — включите галочку выше.")
+
+    # ── Общий бот приложения (только администратор) ───────────────────────────
+    if _role == "admin":
+        tg_ok = tg_is_configured()
+        with st.expander("Telegram: общий бот приложения (админ)", expanded=False):
+            st.markdown(
+                "Токен общего бота, от имени которого получают уведомления все "
+                "пользователи, не указавшие собственного бота. На облаке надёжнее "
+                "задать его в **Settings → Secrets** как `telegram.bot_token`."
+            )
+            with st.form("telegram_creds"):
+                tg_token = st.text_input("Bot Token (от @BotFather)", type="password")
+                tg_chat = st.text_input("Chat ID для служебных сообщений",
+                                        help="Необязательно: куда слать общие итоги")
+                if st.form_submit_button("💾 Сохранить общий бот"):
+                    if tg_token:
+                        save_credentials({"telegram": {"bot_token": tg_token,
+                                                       "chat_id": tg_chat}})
+                        tg_reload()
+                        st.success("Общий бот сохранён.")
+                        st.rerun()
+                    else:
+                        st.error("Введите токен бота.")
+            if tg_ok:
+                st.success("✅ Общий бот настроен")
 
     st.markdown("---")
     st.markdown("### 📦 Полная выгрузка реестра Kazpatent")

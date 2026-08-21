@@ -39,6 +39,12 @@ def run_monitoring(
         _profile_owner = profile["owner_email"] if "owner_email" in profile.keys() else None
         # режим «по правообладателю»: в main_designation хранится наименование владельца
         _is_owner_mode = (profile["search_mode"] or "") == "owner"
+        # персональный Telegram владельца профиля (пусто — уведомления не шлём)
+        try:
+            from user_settings import telegram_config_for
+            _tg_cfg = telegram_config_for(_profile_owner) if _profile_owner else {}
+        except Exception:
+            _tg_cfg = {}
 
         for source in active_sources:
             run_id = _start_run(conn, profile["id"], source["code"])
@@ -63,8 +69,9 @@ def run_monitoring(
                         if is_new:
                             new_count += 1
                             new_marks_all.append({**candidate, **result})
-                            if tg_configured():
-                                notify_new_mark(profile_name, candidate, result)
+                            if _tg_cfg or tg_configured():
+                                notify_new_mark(profile_name, candidate, result,
+                                                cfg=_tg_cfg or None)
                 else:
                     candidates = _fetch_candidates(source["code"], all_designations)
 
@@ -80,8 +87,9 @@ def run_monitoring(
                             if is_new:
                                 new_count += 1
                                 new_marks_all.append({**candidate, **result})
-                                if tg_configured():
-                                    notify_new_mark(profile_name, candidate, result)
+                                if _tg_cfg or tg_configured():
+                                    notify_new_mark(profile_name, candidate, result,
+                                                    cfg=_tg_cfg or None)
 
                 _update_source_status(conn, source["code"], success=True)
                 _finish_run(conn, run_id, "success", found_count, new_count)
