@@ -2082,7 +2082,7 @@ elif page == "🔍 Единый поиск":
         with col_q:
             query = st.text_input(
                 "Обозначение, номер регистрации или правообладатель",
-                placeholder="Например: SERGEK · 56289 · Французский Дом BSB",
+                placeholder="Например: SERGEK · 56289 · ТОО «Сергек Групп»",
             )
         with col_mode:
             search_mode = st.radio(
@@ -2275,7 +2275,7 @@ elif page == "📋 Профили мониторинга":
         _prev_input = st.text_input(
             "Наименование правообладателя *" if _owner_mode else "Основное обозначение *",
             key="_prev_desig_input",
-            placeholder=("Французский Дом BSB — достаточно части названия"
+            placeholder=("Сергек Групп — достаточно части названия"
                          if _owner_mode
                          else "СЕРГЕК или SERGEK — система добавит оба варианта автоматически"),
         )
