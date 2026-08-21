@@ -35,6 +35,39 @@ def is_valid_bin(bin_str: str) -> bool:
     return bool(re.fullmatch(r"\d{12}", (bin_str or "").strip()))
 
 
+# Организационно-правовые формы, которые не помогают поиску в реестре Kazpatent
+_LEGAL_FORMS = [
+    "товарищество с ограниченной ответственностью",
+    "акционерное общество", "индивидуальный предприниматель",
+    "республиканское государственное предприятие",
+    "государственное предприятие", "общественное объединение",
+    "производственный кооператив", "частное учреждение",
+    "тоо", "ао", "ип", "рГП", "рГп", "гп", "оо", "пк", "чу", "жшс",
+]
+
+
+def core_company_name(full_name: str) -> str:
+    """
+    Выделяет «ядро» наименования для поиска правообладателя в Kazpatent.
+    'АО "KASPI BANK"' → 'KASPI BANK'; 'ТОО «ИнфоТех»' → 'ИнфоТех'.
+    Реестр ищет по «содержит», а полную форму с приставкой не находит.
+    """
+    if not full_name:
+        return ""
+    # 1. текст в любых кавычках
+    m = re.search(r'[«"\'“]([^»"\'”]+)[»"\'”]', full_name)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # 2. срезаем известную орг.-правовую форму в начале
+    low = full_name.strip().lower()
+    for form in sorted(_LEGAL_FORMS, key=len, reverse=True):
+        if low.startswith(form.lower()):
+            rest = full_name.strip()[len(form):].strip(' "«»\'').strip()
+            if rest:
+                return rest
+    return full_name.strip()
+
+
 # ─── Справочник в базе ───────────────────────────────────────────────────────
 
 def ensure_bin_schema() -> None:
@@ -127,6 +160,48 @@ def list_directory(limit: int = 200) -> list[dict]:
         return []
 
 
+# ─── Основной автоматический источник: apiba.prgapp.kz (Параграф/adata) ──────
+
+APIBA_URL = "https://apiba.prgapp.kz/CompanyFullInfo"
+
+
+def _pick(field) -> str:
+    """Значение поля вида {'value': ...} или строки."""
+    if isinstance(field, dict):
+        return str(field.get("value") or field.get("ru") or field.get("title") or "").strip()
+    return str(field or "").strip()
+
+
+def _try_apiba(bin_str: str) -> dict:
+    """Публичный API «Параграф.Бизнес-адата» — БИН → сведения об организации."""
+    try:
+        r = requests.get(f"{APIBA_URL}?id={bin_str}&lang=ru", headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code != 200:
+            logger.debug(f"apiba вернул {r.status_code} для БИН {bin_str}")
+            return dict(_EMPTY)
+        data = r.json()
+        bi = data.get("basicInfo") or {}
+        name = _pick(bi.get("titleRu")) or _pick(bi.get("titleKz"))
+        if not name:
+            return dict(_EMPTY)
+        return {
+            **_EMPTY,
+            "name": name,
+            "address": _pick(bi.get("addressRu")) or _pick(bi.get("addressKz")),
+            "director": _pick(bi.get("ceo")),
+            "status": _pick(bi.get("status")),
+            "oked": _pick(bi.get("primaryOKED")),
+            "kato": _pick(bi.get("kato")),
+            "source": "Параграф (apiba)",
+        }
+    except ValueError:
+        # не-JSON ответ (например, БИН не найден) — тихо пропускаем
+        return dict(_EMPTY)
+    except Exception as e:
+        logger.debug(f"apiba БИН {bin_str}: {e}")
+        return dict(_EMPTY)
+
+
 # ─── Открытые данные egov (нужен ключ API) ───────────────────────────────────
 
 def _egov_api_key() -> str:
@@ -188,13 +263,24 @@ def lookup_company_by_bin(bin_str: str) -> dict:
     if not is_valid_bin(bin_str):
         return {**_EMPTY, "error": "БИН должен содержать ровно 12 цифр"}
 
+    # 1. справочник (мгновенно, без сети)
     found = get_from_directory(bin_str)
     if found.get("name"):
         return found
 
+    # 2. автоматический публичный источник (Параграф)
+    found = _try_apiba(bin_str)
+    if found.get("name"):
+        try:
+            save_to_directory(bin_str, found["name"], found.get("address", ""),
+                              note=found.get("source", ""))
+        except Exception:
+            pass
+        return found
+
+    # 3. data.egov.kz (если задан ключ API)
     found = _try_egov_opendata(bin_str)
     if found.get("name"):
-        # запоминаем, чтобы в следующий раз не ходить в сеть
         try:
             save_to_directory(bin_str, found["name"], found.get("address", ""),
                               note="data.egov.kz")
@@ -202,8 +288,7 @@ def lookup_company_by_bin(bin_str: str) -> dict:
             pass
         return found
 
-    hint = ("Автоматическое определение недоступно: бесплатные реестры "
-            "(stat.gov.kz, salyk.kz) закрыли публичный доступ. "
-            "Укажите наименование компании вручную — система запомнит его "
-            "для этого БИН. Либо пропишите ключ API data.egov.kz в Настройках.")
+    hint = ("Не удалось определить компанию по БИН автоматически. "
+            "Проверьте, что БИН введён верно, либо укажите наименование "
+            "компании вручную — система запомнит его для этого БИН.")
     return {**_EMPTY, "error": hint}

@@ -2169,14 +2169,15 @@ elif page == "🔍 Единый поиск":
         # ── БИН → наименование компании ──
         owner_query = query if by_owner else ""
         if by_bin:
-            from bin_lookup import lookup_company_by_bin, is_valid_bin
+            from bin_lookup import lookup_company_by_bin, is_valid_bin, core_company_name
             if not is_valid_bin(query):
                 st.error("БИН должен состоять ровно из 12 цифр.")
                 st.stop()
             _bin_info = lookup_company_by_bin(query)
             if _bin_info.get("name"):
-                owner_query = _bin_info["name"]
-                st.success(f"БИН **{query}** — {owner_query}"
+                # в реестре ищем по «ядру» названия — полная форма с приставкой не находится
+                owner_query = core_company_name(_bin_info["name"])
+                st.success(f"БИН **{query}** — {_bin_info['name']}"
                            + (f"  ·  источник: {_bin_info['source']}" if _bin_info.get("source") else ""))
                 if _bin_info.get("address"):
                     st.caption(f"Адрес: {_bin_info['address']}")
