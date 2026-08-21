@@ -424,3 +424,115 @@ def _normalize_status(text: str) -> str:
 def _parse_classes(text: str) -> list[int]:
     nums = re.findall(r'\b(\d{1,2})\b', text)
     return sorted(set(int(n) for n in nums if 1 <= int(n) <= 45))
+
+
+# ─── Реестр договоров о распоряжении правами (уступка, лицензия, залог) ────────
+
+def search_contracts(party: str = "", subject: str = "",
+                     side: str = "any", max_pages: int = 10) -> list[dict]:
+    """
+    Поиск в реестре договоров gosreestr.kazpatent.kz (/Contract).
+
+    party:   наименование стороны договора (компания/лицо).
+    side:    'side1' — искать среди «Сторона 1» (кто передал права),
+             'side2' — среди «Сторона 2» (кто получил),
+             'any'   — в обеих сторонах (объединение результатов).
+    subject: предмет договора — номер знака/патента (напр. '85439').
+
+    Возвращает список договоров с полями: contract_number, contract_date,
+    contract_type, subject, side1, side2. Среди видов договоров есть уступка
+    (передача исключительного права), лицензия, залог, опцион.
+    """
+    endpoint = "/Contract/ContractsPartial"
+    url = BASE_URL + endpoint
+    session = _make_session()
+
+    def _one_filter(prop: str, value: str) -> list[dict]:
+        results = []
+        page = 0
+        while page < max_pages:
+            data = {
+                "searchObj[SearchModelObj][ReestrType]": "Contract",
+                "searchObj[SearchModelObj][Key]": "",
+                "filterObj[valid]": "true",
+                "view": "1",
+            }
+            data["filterObj[sFindParam][0][sProperty]"] = prop
+            data["filterObj[sFindParam][0][sOperator]"] = "Contain"
+            data["filterObj[sFindParam][0][sValue]"] = value
+            data["filterObj[sFindParam][0][sValue2]"] = ""
+            if page > 0:
+                data["cvReestr$DXPage"] = str(page)
+                data["__DXCallbackParam"] = f"Pager|{page}"
+            try:
+                resp = session.post(url, data=data, headers=HEADERS, timeout=20)
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                logger.error(f"Ошибка запроса к реестру договоров: {e}")
+                break
+            recs, has_next = _parse_contract_response(resp.text)
+            if not recs:
+                break
+            results.extend(recs)
+            if not has_next:
+                break
+            page += 1
+            time.sleep(0.5)
+        return results
+
+    collected = []
+    if subject:
+        collected.extend(_one_filter("Subject", subject.strip()))
+    if party:
+        if side in ("side1", "any"):
+            collected.extend(_one_filter("Side1", party.strip()))
+        if side in ("side2", "any"):
+            collected.extend(_one_filter("Side2", party.strip()))
+
+    # дедупликация по номеру договора
+    seen, unique = set(), []
+    for c in collected:
+        key = c.get("contract_number") or id(c)
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+    return unique
+
+
+def _parse_contract_response(html: str) -> tuple[list[dict], bool]:
+    soup = BeautifulSoup(html, "html.parser")
+    records = []
+    for card in soup.select("div.dxcvFlowCard_Material, div[id*='DXDataCard']"):
+        rec = {"contract_number": "", "contract_date": "", "contract_type": "",
+               "subject": "", "side1": "", "side2": "",
+               "source": "kz_contract", "source_url": BASE_URL + "/Contract"}
+        for item in card.select(".dxflItem_Material"):
+            cap = item.select_one(".dxflCaption_Material, .dxflCaptionCell_Material")
+            val = item.select_one(".dxflNestedControlCell_Material")
+            if not cap or not val:
+                continue
+            label = cap.get_text(" ", strip=True).lower().rstrip(":").strip()
+            value = val.get_text(" ", strip=True)
+            if "регистрационный номер" in label:
+                rec["contract_number"] = value
+            elif "дата регистрации" in label:
+                rec["contract_date"] = value
+            elif "вид договора" in label:
+                rec["contract_type"] = value
+            elif "предмет" in label:
+                rec["subject"] = value
+            elif "сторона 1" in label:
+                rec["side1"] = value
+            elif "сторона 2" in label:
+                rec["side2"] = value
+        if rec["contract_number"] or rec["side1"] or rec["side2"]:
+            records.append(rec)
+
+    pager = soup.select_one(".dxpLite_Material, [class*='dxpPager']")
+    has_next = False
+    if pager:
+        m = re.search(r'страница\s+(\d+)\s+из\s+(\d+)',
+                      pager.get_text(" ", strip=True), re.IGNORECASE)
+        if m and int(m.group(1)) < int(m.group(2)):
+            has_next = True
+    return records, has_next

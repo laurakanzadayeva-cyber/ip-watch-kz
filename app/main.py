@@ -2098,6 +2098,7 @@ elif page == "🔍 Единый поиск":
         "invention":         "Изобретения",
         "utility_model":     "Полезные модели",
         "industrial_design": "Промышленные образцы",
+        "contract":          "Договоры (уступка, лицензия, залог)",
         "copyright":         "Авторское право (свидетельства)",
     }
 
@@ -2112,6 +2113,7 @@ elif page == "🔍 Единый поиск":
     )
     _is_patent = reg_type in ("invention", "utility_model", "industrial_design")
     _is_copyright = reg_type == "copyright"
+    _is_contract = reg_type == "contract"
 
     # Доступные режимы поиска зависят от реестра
     if _is_patent:
@@ -2120,6 +2122,8 @@ elif page == "🔍 Единый поиск":
         _mode_options = ["названию", "номеру", "автору"]
     elif _is_copyright:
         _mode_options = ["названию", "правообладателю"]
+    elif _is_contract:
+        _mode_options = ["стороне договора", "предмету (номер знака/патента)"]
     else:
         _mode_options = ["названию", "номеру", "правообладателю", "БИН"]
 
@@ -2130,6 +2134,10 @@ elif page == "🔍 Единый поиск":
         if _is_patent:
             st.caption("Патентные реестры gosreestr нельзя искать по компании-"
                        "правообладателю — только по названию, номеру или автору.")
+        if _is_contract:
+            st.caption("Реестр договоров о распоряжении правами: уступка, лицензия, "
+                       "залог, опцион. Ищите по стороне договора (компания/лицо) "
+                       "или по предмету — номеру товарного знака/патента.")
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
@@ -2149,13 +2157,13 @@ elif page == "🔍 Единый поиск":
         with col1:
             search_registry_cb = st.checkbox("Реестр Kazpatent (все зарегистрированные)",
                                              value=False, key="us_src_registry",
-                                             disabled=_is_copyright)
+                                             disabled=_is_copyright or _is_contract)
             search_bulletin_cb = st.checkbox(
                 "Бюллетень (новые публикации по годам)",
                 value=False, key="us_src_bulletin",
-                disabled=_is_patent or _is_copyright,
+                disabled=_is_patent or _is_copyright or _is_contract,
                 help="Бюллетень доступен только для товарных знаков"
-                     if (_is_patent or _is_copyright) else None)
+                     if (_is_patent or _is_copyright or _is_contract) else None)
         with col2:
             current_year = datetime.now().year
             years_available = list(range(2021, current_year + 1))
@@ -2163,7 +2171,7 @@ elif page == "🔍 Единый поиск":
                 "Годы бюллетеня",
                 options=years_available,
                 default=[],
-                disabled=_is_patent or _is_copyright,
+                disabled=_is_patent or _is_copyright or _is_contract,
                 help="Выберите годы для поиска в бюллетене",
                 key="us_years",
             )
@@ -2204,8 +2212,41 @@ elif page == "🔍 Единый поиск":
             st.session_state.pop("_bin_error", None)
             st.rerun()
 
+    # ── Договоры (уступка/лицензия): отдельный реестр gosreestr ──
+    if submitted and query.strip() and _is_contract:
+        _cq = query.strip()
+        st.markdown("### 📝 Реестр договоров (распоряжение правами)")
+        with st.spinner("Поиск в реестре договоров..."):
+            try:
+                from scraper_kazpatent import search_contracts
+                if search_mode.startswith("предмету"):
+                    _ct_res = search_contracts(subject=_cq, max_pages=5)
+                else:
+                    _ct_res = search_contracts(party=_cq, side="any", max_pages=5)
+            except Exception as _ct_err:
+                _ct_res = []
+                st.error(f"Ошибка реестра договоров: {_ct_err}")
+        if _ct_res:
+            st.success(f"Найдено договоров: **{len(_ct_res)}**")
+            for r in _ct_res:
+                _ctype = r.get("contract_type", "")
+                _mark = "🔁" if "уступ" in _ctype.lower() else "📄"
+                with st.expander(f"{_mark} {_ctype[:45]}  |  предмет: {r.get('subject', '—')}"):
+                    st.write(f"**Вид договора:** {r.get('contract_type', '—')}")
+                    st.write(f"**Предмет договора:** {r.get('subject', '—')}")
+                    st.write(f"**Сторона 1 (правопередающая):** {r.get('side1', '—')}")
+                    st.write(f"**Сторона 2 (правополучающая):** {r.get('side2', '—')}")
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        st.write(f"**Рег. № договора:** {r.get('contract_number', '—')}")
+                    with cc2:
+                        st.write(f"**Дата регистрации:** {r.get('contract_date', '—')}")
+                    st.markdown(f"[🔗 Реестр договоров]({r.get('source_url', 'https://gosreestr.kazpatent.kz/Contract')})")
+        elif _ct_res == []:
+            st.info(f"По запросу «{_cq}» договоров не найдено. "
+                    "Проверьте написание стороны или номер предмета (без «№»).")
     # ── Авторское право: отдельный источник, без чекбоксов реестра/бюллетеня ──
-    if submitted and query.strip() and _is_copyright:
+    elif submitted and query.strip() and _is_copyright:
         _cq = query.strip()
         _by = "author" if search_mode in ("правообладателю", "номеру") else "title"
         st.markdown("### ©️ Реестр авторских прав")
