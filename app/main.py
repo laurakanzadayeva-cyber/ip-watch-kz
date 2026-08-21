@@ -2093,6 +2093,7 @@ elif page == "🔍 Единый поиск":
         "invention":         "Изобретения",
         "utility_model":     "Полезные модели",
         "industrial_design": "Промышленные образцы",
+        "copyright":         "Авторское право (свидетельства)",
     }
 
     with st.form("unified_search"):
@@ -2100,9 +2101,14 @@ elif page == "🔍 Единый поиск":
             "Реестр",
             options=list(REGISTRY_OPTIONS.keys()),
             format_func=lambda x: REGISTRY_OPTIONS[x],
-            help="Выберите реестр Kazpatent, как на сайте gosreestr.kazpatent.kz",
+            help="Выберите реестр Kazpatent (gosreestr.kazpatent.kz) или "
+                 "реестр авторских прав (copyright.kazpatent.kz)",
         )
         _is_patent = reg_type in ("invention", "utility_model", "industrial_design")
+        _is_copyright = reg_type == "copyright"
+        if _is_copyright:
+            st.caption("Реестр авторских прав ищется по автору/правообладателю "
+                       "или по названию произведения среди последних публикаций.")
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
@@ -2121,11 +2127,14 @@ elif page == "🔍 Единый поиск":
         col1, col2 = st.columns(2)
         with col1:
             search_registry_cb = st.checkbox("Реестр Kazpatent (все зарегистрированные)",
-                                             value=False, key="us_src_registry")
+                                             value=False, key="us_src_registry",
+                                             disabled=_is_copyright)
             search_bulletin_cb = st.checkbox(
                 "Бюллетень (новые публикации по годам)",
-                value=False, key="us_src_bulletin", disabled=_is_patent,
-                help="Бюллетень доступен только для товарных знаков" if _is_patent else None)
+                value=False, key="us_src_bulletin",
+                disabled=_is_patent or _is_copyright,
+                help="Бюллетень доступен только для товарных знаков"
+                     if (_is_patent or _is_copyright) else None)
         with col2:
             current_year = datetime.now().year
             years_available = list(range(2021, current_year + 1))
@@ -2133,7 +2142,7 @@ elif page == "🔍 Единый поиск":
                 "Годы бюллетеня",
                 options=years_available,
                 default=[],
-                disabled=_is_patent,
+                disabled=_is_patent or _is_copyright,
                 help="Выберите годы для поиска в бюллетене",
                 key="us_years",
             )
@@ -2174,7 +2183,43 @@ elif page == "🔍 Единый поиск":
             st.session_state.pop("_bin_error", None)
             st.rerun()
 
-    if submitted and query.strip() and not (search_registry_cb or search_bulletin_cb):
+    # ── Авторское право: отдельный источник, без чекбоксов реестра/бюллетеня ──
+    if submitted and query.strip() and _is_copyright:
+        _cq = query.strip()
+        _by = "author" if search_mode in ("правообладателю", "номеру") else "title"
+        st.markdown("### ©️ Реестр авторских прав")
+        st.caption("Поиск по " + ("автору/правообладателю" if _by == "author"
+                                  else "названию произведения")
+                   + " среди последних опубликованных свидетельств.")
+        with st.spinner("Поиск в реестре авторских прав..."):
+            try:
+                from scraper_copyright import search as _cp_search
+                _cp_res = _cp_search(_cq, by=_by)
+            except Exception as _cp_err:
+                _cp_res = []
+                st.error(f"Не удалось получить данные реестра авторских прав: {_cp_err}")
+        if _cp_res:
+            st.success(f"Найдено свидетельств: **{len(_cp_res)}**")
+            for r in _cp_res:
+                with st.expander(f"©️ {r.get('title', '')[:70]}  |  Св-во № {r.get('cert_number', '')}"):
+                    st.write(f"**Название:** {r.get('title', '—')}")
+                    st.write(f"**Авторы / правообладатели:** {r.get('authors', '—')}")
+                    st.write(f"**Тип объекта:** {r.get('object_type', '—')}")
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        st.write(f"**Св-во №:** {r.get('cert_number', '—')}")
+                        st.write(f"**№ заявки:** {r.get('application_number', '—')}")
+                        st.write(f"**Статус:** {r.get('status', '—')}")
+                    with cc2:
+                        st.write(f"**Дата публикации:** {r.get('publication_date', '—')}")
+                        st.write(f"**Дата подачи:** {r.get('application_date', '—')}")
+                        st.write(f"**Дата создания:** {r.get('creation_date', '—')}")
+                    st.markdown(f"[🔗 Реестр авторских прав]({r.get('source_url', 'https://copyright.kazpatent.kz/')})")
+        elif _cp_res == []:
+            st.info(f"По запросу «{_cq}» среди последних свидетельств совпадений нет. "
+                    "Поиск охватывает свежие публикации — для отслеживания новых "
+                    "свидетельств настройте профиль мониторинга авторского права.")
+    elif submitted and query.strip() and not (search_registry_cb or search_bulletin_cb):
         st.warning("Отметьте, где искать: «Реестр Kazpatent» и/или «Бюллетень».")
     elif submitted and query.strip():
         query = query.strip()
