@@ -1208,6 +1208,43 @@ div[data-testid="stButton"] > button[kind="secondary"] {
     background: #F9FAFB; border: 1px solid #E5E7EB;
     border-radius: 8px; padding: 8px 12px; margin-bottom: 6px;
 }
+/* ── Скелетоны загрузки (ТЗ 14) ──────────────────────────────────────────── */
+@keyframes ipw-shimmer { 0% { background-position:-420px 0; } 100% { background-position:420px 0; } }
+.skeleton { border-radius:8px; background:#EEF2F7;
+            background-image:linear-gradient(90deg,#EEF2F7 0px,#F8FAFC 180px,#EEF2F7 360px);
+            background-size:840px 100%; animation:ipw-shimmer 1.2s linear infinite; }
+.sk-line { height:12px; margin:8px 0; }
+.sk-card { height:96px; margin:6px 0; }
+.sk-chart { height:240px; margin:6px 0; }
+
+/* ── Адаптивность (ТЗ 13) ────────────────────────────────────────────────── */
+/* таблицы не ломают верстку — прокручиваются по горизонтали */
+.ipw-table { display:block; overflow-x:auto; max-width:100%; }
+
+@media (max-width:1439px) {
+    .mc-grid { grid-template-columns:repeat(3,minmax(0,1fr)) !important; }
+}
+@media (max-width:1023px) {
+    /* колонки Streamlit переносятся: правая панель уходит вниз */
+    section.main div[data-testid="stHorizontalBlock"] { flex-wrap:wrap !important; }
+    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        min-width:calc(50% - 1rem) !important; flex:1 1 calc(50% - 1rem) !important;
+    }
+    .mc-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+    .qa-card { min-height:auto; }
+}
+@media (max-width:767px) {
+    section.main div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        min-width:100% !important; flex:1 1 100% !important;
+    }
+    .mc-grid { grid-template-columns:1fr !important; }
+    .mc-value { font-size:26px; }
+    .stButton > button { width:100% !important; }
+}
+@media (max-width:420px) {
+    .block-container { padding-left:0.7rem !important; padding-right:0.7rem !important; }
+    .card { padding:12px 13px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1603,41 +1640,62 @@ if page == "🏠 Главная":
         " AND sr.profile_id IN (SELECT id FROM monitoring_profiles WHERE owner_email = ?)")
     _srp = [] if _own is None else [_own]
 
-    conn = get_connection()
-    _lr = conn.execute(
-        "SELECT sr.started_at AS s, sr.status AS st FROM search_runs sr "
-        "WHERE 1=1" + _srw + " ORDER BY sr.started_at DESC LIMIT 1", _srp).fetchone()
-    last_dt = _lr["s"] if _lr else None
-    last_status = _lr["st"] if _lr else None
-    active_profiles = conn.execute(
-        "SELECT COUNT(*) AS c FROM monitoring_profiles mp WHERE mp.status='active'" + _pfw,
-        _pfp).fetchone()["c"]
-    high_risk = conn.execute(
-        "SELECT COUNT(*) AS c FROM found_marks fm WHERE fm.risk_level='high'" + _fmw,
-        _fmp).fetchone()["c"]
-    medium_risk = conn.execute(
-        "SELECT COUNT(*) AS c FROM found_marks fm WHERE fm.risk_level='medium'" + _fmw,
-        _fmp).fetchone()["c"]
-    # для графика/дельт вытягиваем даты находок и считаем в Python (кросс-БД)
-    _ffrows = conn.execute(
-        "SELECT fm.first_found_at AS ff FROM found_marks fm WHERE fm.first_found_at IS NOT NULL" + _fmw,
-        _fmp).fetchall()
-    _recent = conn.execute(
-        "SELECT fm.id AS id, fm.designation AS d, fm.source_code AS sc, "
-        "fm.first_found_at AS ff, fm.risk_level AS rl FROM found_marks fm "
-        "WHERE 1=1" + _fmw + " ORDER BY fm.first_found_at DESC LIMIT 6", _fmp).fetchall()
-    _srcrows = conn.execute(
-        "SELECT fm.source_code AS sc, COUNT(*) AS c FROM found_marks fm "
-        "WHERE 1=1" + _fmw + " GROUP BY fm.source_code", _fmp).fetchall()
-    _dlrows = conn.execute(
-        "SELECT fm.designation AS d, fm.registration_number AS rn, fm.registration_date AS rd "
-        "FROM found_marks fm WHERE fm.registration_date IS NOT NULL AND fm.registration_date != ''" + _fmw,
-        _fmp).fetchall()
-    _runrows = conn.execute(
-        "SELECT sr.started_at AS started, sr.status AS s, mp.name AS pn "
-        "FROM search_runs sr LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id "
-        "WHERE 1=1" + _srw + " ORDER BY sr.started_at DESC LIMIT 5", _srp).fetchall()
-    conn.close()
+    # состояние загрузки: skeleton до получения данных (ТЗ 14)
+    _skel = st.empty()
+    _skel.markdown("""
+    <div class="skeleton sk-line" style="width:38%;height:22px;"></div>
+    <div class="skeleton sk-card"></div>
+    <div class="mc-grid">
+        <div class="skeleton sk-card"></div><div class="skeleton sk-card"></div>
+        <div class="skeleton sk-card"></div><div class="skeleton sk-card"></div>
+        <div class="skeleton sk-card"></div>
+    </div>
+    <div class="skeleton sk-chart"></div>
+    """, unsafe_allow_html=True)
+
+    try:
+        conn = get_connection()
+        _lr = conn.execute(
+            "SELECT sr.started_at AS s, sr.status AS st FROM search_runs sr "
+            "WHERE 1=1" + _srw + " ORDER BY sr.started_at DESC LIMIT 1", _srp).fetchone()
+        last_dt = _lr["s"] if _lr else None
+        last_status = _lr["st"] if _lr else None
+        active_profiles = conn.execute(
+            "SELECT COUNT(*) AS c FROM monitoring_profiles mp WHERE mp.status='active'" + _pfw,
+            _pfp).fetchone()["c"]
+        high_risk = conn.execute(
+            "SELECT COUNT(*) AS c FROM found_marks fm WHERE fm.risk_level='high'" + _fmw,
+            _fmp).fetchone()["c"]
+        medium_risk = conn.execute(
+            "SELECT COUNT(*) AS c FROM found_marks fm WHERE fm.risk_level='medium'" + _fmw,
+            _fmp).fetchone()["c"]
+        # для графика/дельт вытягиваем даты находок и считаем в Python (кросс-БД)
+        _ffrows = conn.execute(
+            "SELECT fm.first_found_at AS ff FROM found_marks fm WHERE fm.first_found_at IS NOT NULL" + _fmw,
+            _fmp).fetchall()
+        _recent = conn.execute(
+            "SELECT fm.id AS id, fm.designation AS d, fm.source_code AS sc, "
+            "fm.first_found_at AS ff, fm.risk_level AS rl FROM found_marks fm "
+            "WHERE 1=1" + _fmw + " ORDER BY fm.first_found_at DESC LIMIT 6", _fmp).fetchall()
+        _srcrows = conn.execute(
+            "SELECT fm.source_code AS sc, COUNT(*) AS c FROM found_marks fm "
+            "WHERE 1=1" + _fmw + " GROUP BY fm.source_code", _fmp).fetchall()
+        _dlrows = conn.execute(
+            "SELECT fm.designation AS d, fm.registration_number AS rn, fm.registration_date AS rd "
+            "FROM found_marks fm WHERE fm.registration_date IS NOT NULL AND fm.registration_date != ''" + _fmw,
+            _fmp).fetchall()
+        _runrows = conn.execute(
+            "SELECT sr.started_at AS started, sr.status AS s, mp.name AS pn "
+            "FROM search_runs sr LEFT JOIN monitoring_profiles mp ON mp.id = sr.profile_id "
+            "WHERE 1=1" + _srw + " ORDER BY sr.started_at DESC LIMIT 5", _srp).fetchall()
+        conn.close()
+    except Exception as _db_err:  # ошибка загрузки данных (ТЗ 14, критерий 12)
+        _skel.empty()
+        st.error("Не удалось загрузить данные дашборда. "
+                 "Источник данных временно недоступен — обновите страницу позже.")
+        st.caption(f"Техническая информация: {_db_err}")
+        st.stop()
+    _skel.empty()
 
     total_marks = len(_ffrows)
     low_risk = max(total_marks - high_risk - medium_risk, 0)
@@ -1854,7 +1912,7 @@ if page == "🏠 Главная":
 
         # Показатели
         st.markdown(f"""
-        <div class="mc-grid" style="grid-template-columns:repeat(5,minmax(0,1fr));">
+        <div class="mc-grid">
             <div class="mc mc-blue">
                 <div class="mc-top"><span class="mc-label">Активных профилей</span><span class="mc-ic">📋</span></div>
                 <div class="mc-value">{active_profiles}</div>
