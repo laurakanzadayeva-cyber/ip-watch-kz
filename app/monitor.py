@@ -37,6 +37,8 @@ def run_monitoring(
         all_designations = [profile["main_designation"]] + [v["variant"] for v in variants]
         profile_name = profile["main_designation"]
         _profile_owner = profile["owner_email"] if "owner_email" in profile.keys() else None
+        # режим «по правообладателю»: в main_designation хранится наименование владельца
+        _is_owner_mode = (profile["search_mode"] or "") == "owner"
 
         for source in active_sources:
             run_id = _start_run(conn, profile["id"], source["code"])
@@ -45,14 +47,16 @@ def run_monitoring(
             new_count = 0
 
             try:
-                candidates = _fetch_candidates(source["code"], all_designations)
-
-                for ctrl in all_designations:
+                if _is_owner_mode:
+                    # Профиль следит за портфелем правообладателя: берём все его знаки
+                    candidates = _fetch_owner_candidates(source["code"], all_designations)
                     for candidate in candidates:
-                        result = compare(ctrl, candidate["designation"])
-                        if not result["is_match"]:
-                            continue
-
+                        result = {
+                            "reason": f"Знак правообладателя «{profile_name}»",
+                            "risk_level": "informational",
+                            "is_match": True,
+                            "score": 100,
+                        }
                         is_new = _save_mark(conn, profile["id"], source["code"], candidate, result,
                                             _profile_owner)
                         found_count += 1
@@ -61,6 +65,23 @@ def run_monitoring(
                             new_marks_all.append({**candidate, **result})
                             if tg_configured():
                                 notify_new_mark(profile_name, candidate, result)
+                else:
+                    candidates = _fetch_candidates(source["code"], all_designations)
+
+                    for ctrl in all_designations:
+                        for candidate in candidates:
+                            result = compare(ctrl, candidate["designation"])
+                            if not result["is_match"]:
+                                continue
+
+                            is_new = _save_mark(conn, profile["id"], source["code"], candidate, result,
+                                                _profile_owner)
+                            found_count += 1
+                            if is_new:
+                                new_count += 1
+                                new_marks_all.append({**candidate, **result})
+                                if tg_configured():
+                                    notify_new_mark(profile_name, candidate, result)
 
                 _update_source_status(conn, source["code"], success=True)
                 _finish_run(conn, run_id, "success", found_count, new_count)
@@ -127,18 +148,39 @@ def _fetch_candidates(source_code: str, designations: list[str]) -> list[dict]:
     return candidates
 
 
+def _fetch_owner_candidates(source_code: str, owners: list[str]) -> list[dict]:
+    """Все знаки указанных правообладателей (профиль с режимом «по правообладателю»)."""
+    if source_code != "kz_registry":
+        return []  # бюллетень ищет только по обозначению
+    # Реестр общеизвестных знаков (TIM) фильтр по владельцу игнорирует — не используем
+    candidates = []
+    for owner_name in owners:
+        try:
+            items = search_registry_new(
+                query="", owner=owner_name, object_type="trademark", max_pages=10)
+            for it in items:
+                it.setdefault("object_type", "trademark")
+            candidates.extend(items)
+        except Exception as e:
+            logger.warning(f"Ошибка поиска по правообладателю '{owner_name}': {e}")
+    return candidates
+
+
 def _save_mark(conn, profile_id: int, source_code: str, candidate: dict, match_result: dict,
                owner_email: str | None = None) -> bool:
+    # Дубликат — только полное совпадение номеров: раньше условие OR схлопывало
+    # разные знаки одного владельца с пустым номером заявки в одну запись.
     existing = conn.execute(
         """SELECT id FROM found_marks
            WHERE profile_id=? AND source_code=? AND designation=?
-             AND (registration_number=? OR application_number=?)""",
+             AND COALESCE(registration_number, '') = ?
+             AND COALESCE(application_number, '') = ?""",
         (
             profile_id,
             source_code,
             candidate["designation"],
-            candidate.get("registration_number", ""),
-            candidate.get("application_number", ""),
+            candidate.get("registration_number", "") or "",
+            candidate.get("application_number", "") or "",
         ),
     ).fetchone()
 

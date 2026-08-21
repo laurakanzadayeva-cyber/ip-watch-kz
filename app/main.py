@@ -2081,16 +2081,17 @@ elif page == "🔍 Единый поиск":
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
-                "Обозначение или регистрационный номер",
-                placeholder="Например: SERGEK  или  56289",
+                "Обозначение, номер регистрации или правообладатель",
+                placeholder="Например: SERGEK · 56289 · Французский Дом BSB",
             )
         with col_mode:
             search_mode = st.radio(
                 "Искать по",
-                options=["названию", "номеру"],
+                options=["названию", "номеру", "правообладателю"],
                 index=0,
                 horizontal=True,
-                help="Выберите «номеру» чтобы найти конкретный знак по рег. номеру",
+                help="«правообладателю» — все знаки конкретной компании "
+                     "(как выписка из реестра по владельцу)",
             )
         col1, col2 = st.columns(2)
         with col1:
@@ -2109,8 +2110,9 @@ elif page == "🔍 Единый поиск":
 
     if submitted and query.strip():
         query = query.strip()
+        by_owner = (search_mode == "правообладателю")
         # Автодетект: если запрос состоит только из цифр — переключаем на поиск по номеру
-        by_number = (search_mode == "номеру") or query.isdigit()
+        by_number = not by_owner and ((search_mode == "номеру") or query.isdigit())
 
         # ── Реестр ──
         if search_registry_cb:
@@ -2118,7 +2120,13 @@ elif page == "🔍 Единый поиск":
             with st.spinner("Поиск в реестре..."):
                 try:
                     from scraper_kazpatent import search_trademarks
-                    if by_number:
+                    if by_owner:
+                        # все знаки правообладателя из реестра товарных знаков
+                        reg_results = search_trademarks(
+                            query="", owner=query,
+                            object_type="trademark", max_pages=10,
+                        )
+                    elif by_number:
                         reg_results = search_trademarks(
                             query="", reg_number=query,
                             object_type="trademark", max_pages=2,
@@ -2149,7 +2157,11 @@ elif page == "🔍 Единый поиск":
                     st.error(f"Ошибка реестра: {e}")
 
         # ── Бюллетень ──
-        if search_bulletin_cb and selected_years:
+        if search_bulletin_cb and by_owner:
+            st.info("Поиск по правообладателю выполнен по реестру товарных знаков Kazpatent. "
+                    "Бюллетень ищет только по обозначению, а реестр общеизвестных знаков "
+                    "фильтр по владельцу не поддерживает — такие знаки ищите по обозначению.")
+        elif search_bulletin_cb and selected_years:
             st.markdown("### 📰 Бюллетень Kazpatent")
             from scraper_bulletin import search_bulletin as search_bulletin_fn, get_issue_dates
 
@@ -2204,7 +2216,10 @@ elif page == "📋 Профили мониторинга":
                             ).fetchall()
                         if variants:
                             st.write(f"**Варианты:** {', '.join(v['variant'] for v in variants)}")
-                        st.write(f"**Режим поиска:** {p['search_mode']}")
+                        _sm_label = {"owner": "По правообладателю", "strict": "Строгий",
+                                     "normal": "Обычный", "wide": "Широкий"}.get(
+                                         p['search_mode'], p['search_mode'])
+                        st.write(f"**Режим поиска:** {_sm_label}")
                         st.write(f"**МКТУ:** {p['nice_classes']}")
                     with col2:
                         sources_list = (p["sources"] or "").split(",")
@@ -2245,26 +2260,43 @@ elif page == "📋 Профили мониторинга":
     with tab2:
         st.subheader("Новый профиль мониторинга")
 
+        _ptype = st.radio(
+            "Что отслеживаем",
+            options=["обозначение", "правообладателя"],
+            horizontal=True,
+            key="_new_profile_type",
+            help="«правообладателя» — в профиль попадают все знаки указанной компании "
+                 "(её портфель целиком), без оценки сходства",
+        )
+        _owner_mode = (_ptype == "правообладателя")
+
         # Превью авто-вариантов (вне формы, динамически)
         _prev_desig = st.session_state.get("_prev_desig_input", "")
         _prev_input = st.text_input(
-            "Основное обозначение *",
+            "Наименование правообладателя *" if _owner_mode else "Основное обозначение *",
             key="_prev_desig_input",
-            placeholder="СЕРГЕК или SERGEK — система добавит оба варианта автоматически",
+            placeholder=("Французский Дом BSB — достаточно части названия"
+                         if _owner_mode
+                         else "СЕРГЕК или SERGEK — система добавит оба варианта автоматически"),
         )
-        _auto = _auto_variants(_prev_input)
+        _auto = [] if _owner_mode else _auto_variants(_prev_input)
         if _auto:
             st.info(f"🔄 Система автоматически добавит варианты: **{', '.join(_auto)}**")
+        if _owner_mode:
+            st.caption("Поиск идёт по реестру товарных знаков Kazpatent. Бюллетень и реестр "
+                       "общеизвестных знаков фильтр по правообладателю не поддерживают.")
 
         with st.form("create_profile"):
             name = st.text_input("Название профиля *", placeholder="Мониторинг основного бренда")
             main_designation = st.text_input(
-                "Основное обозначение *",
+                "Наименование правообладателя *" if _owner_mode else "Основное обозначение *",
                 value=_prev_input,
-                placeholder="Введите обозначение товарного знака",
+                placeholder=("Введите наименование компании-правообладателя"
+                             if _owner_mode else "Введите обозначение товарного знака"),
             )
             variants_raw = st.text_area(
-                "Дополнительные варианты (каждый с новой строки)",
+                ("Другие написания наименования (каждое с новой строки)"
+                 if _owner_mode else "Дополнительные варианты (каждый с новой строки)"),
                 placeholder="Сергек Медиа\nSergek Media\nБИ АЙ ГРУПП\n— авто-варианты добавятся сами",
             )
             col1, col2 = st.columns(2)
@@ -2275,12 +2307,17 @@ elif page == "📋 Профили мониторинга":
                     default=[],
                     format_func=lambda x: OBJECT_TYPE_LABELS.get(x, x),
                 )
-                search_mode = st.selectbox(
-                    "Режим поиска",
-                    options=["strict", "normal", "wide"],
-                    index=1,
-                    format_func=lambda x: {"strict": "Строгий", "normal": "Обычный", "wide": "Широкий"}[x],
-                )
+                if _owner_mode:
+                    search_mode = "owner"
+                    st.text_input("Режим поиска", value="По правообладателю", disabled=True)
+                else:
+                    search_mode = st.selectbox(
+                        "Режим поиска",
+                        options=["strict", "normal", "wide"],
+                        index=1,
+                        format_func=lambda x: {"strict": "Строгий", "normal": "Обычный",
+                                               "wide": "Широкий"}[x],
+                    )
             with col2:
                 sources = st.multiselect(
                     "Источники",
@@ -2295,7 +2332,9 @@ elif page == "📋 Профили мониторинга":
             submitted = st.form_submit_button("✅ Создать профиль", type="primary")
             if submitted:
                 if not name or not main_designation:
-                    st.error("Заполните обязательные поля: «Название профиля» и «Основное обозначение».")
+                    st.error("Заполните обязательные поля: «Название профиля» и "
+                             + ("«Наименование правообладателя»." if _owner_mode
+                                else "«Основное обозначение»."))
                 else:
                     with get_connection() as conn:
                         cur = conn.execute(
@@ -2322,8 +2361,8 @@ elif page == "📋 Профили мониторинга":
                             ).fetchone()
                             profile_id = row[0] if row else None
 
-                        # Авто-варианты (транслитерация)
-                        all_variants = list(_auto_variants(main_designation))
+                        # Авто-варианты (транслитерация) — только по обозначению
+                        all_variants = [] if _owner_mode else list(_auto_variants(main_designation))
                         # Пользовательские варианты
                         for variant in variants_raw.strip().splitlines():
                             v = variant.strip()
@@ -2335,7 +2374,8 @@ elif page == "📋 Профили мониторинга":
                                 (profile_id, v),
                             )
                         conn.commit()
-                    auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_variants(main_designation))}." if _auto_variants(main_designation) else ""
+                    _auto_added = [] if _owner_mode else _auto_variants(main_designation)
+                    auto_msg = f" Авто-добавлены варианты: {', '.join(_auto_added)}." if _auto_added else ""
                     st.success(f"Профиль «{name}» создан.{auto_msg}")
                     _log("profile_created", detail=name)
                     _bust_cache()
