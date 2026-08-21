@@ -2101,33 +2101,49 @@ elif page == "🔍 Единый поиск":
         "copyright":         "Авторское право (свидетельства)",
     }
 
+    # Выбор реестра — вне формы, чтобы режимы поиска обновлялись сразу
+    reg_type = st.selectbox(
+        "Реестр",
+        options=list(REGISTRY_OPTIONS.keys()),
+        format_func=lambda x: REGISTRY_OPTIONS[x],
+        key="us_reg_type",
+        help="Выберите реестр Kazpatent (gosreestr.kazpatent.kz) или "
+             "реестр авторских прав (copyright.kazpatent.kz)",
+    )
+    _is_patent = reg_type in ("invention", "utility_model", "industrial_design")
+    _is_copyright = reg_type == "copyright"
+
+    # Доступные режимы поиска зависят от реестра
+    if _is_patent:
+        # gosreestr не поддерживает поиск патентов по правообладателю-компании —
+        # только по названию, номеру и автору
+        _mode_options = ["названию", "номеру", "автору"]
+    elif _is_copyright:
+        _mode_options = ["названию", "правообладателю"]
+    else:
+        _mode_options = ["названию", "номеру", "правообладателю", "БИН"]
+
     with st.form("unified_search"):
-        reg_type = st.selectbox(
-            "Реестр",
-            options=list(REGISTRY_OPTIONS.keys()),
-            format_func=lambda x: REGISTRY_OPTIONS[x],
-            help="Выберите реестр Kazpatent (gosreestr.kazpatent.kz) или "
-                 "реестр авторских прав (copyright.kazpatent.kz)",
-        )
-        _is_patent = reg_type in ("invention", "utility_model", "industrial_design")
-        _is_copyright = reg_type == "copyright"
         if _is_copyright:
             st.caption("Реестр авторских прав ищется по автору/правообладателю "
                        "или по названию произведения среди последних публикаций.")
+        if _is_patent:
+            st.caption("Патентные реестры gosreestr нельзя искать по компании-"
+                       "правообладателю — только по названию, номеру или автору.")
         col_q, col_mode = st.columns([3, 1])
         with col_q:
             query = st.text_input(
-                "Название, номер, правообладатель или БИН",
+                "Поисковый запрос",
                 placeholder="Например: SERGEK · 56289 · ТОО «Сергек Групп» · 123456789012",
             )
         with col_mode:
             search_mode = st.radio(
                 "Искать по",
-                options=["названию", "номеру", "правообладателю", "БИН"],
+                options=_mode_options,
                 index=0,
                 horizontal=True,
                 help="«правообладателю» — все объекты компании; «БИН» — то же самое, "
-                     "но по бизнес-идентификационному номеру",
+                     "но по бизнес-идентификационному номеру; «автору» — по автору патента",
             )
         col1, col2 = st.columns(2)
         with col1:
@@ -2230,8 +2246,9 @@ elif page == "🔍 Единый поиск":
         query = query.strip()
         by_bin = (search_mode == "БИН")
         by_owner = (search_mode == "правообладателю")
+        by_author = (search_mode == "автору")
         # Автодетект: если запрос состоит только из цифр — переключаем на поиск по номеру
-        by_number = not by_owner and not by_bin and (
+        by_number = not by_owner and not by_bin and not by_author and (
             (search_mode == "номеру") or query.isdigit())
 
         # ── БИН → наименование компании ──
@@ -2261,7 +2278,13 @@ elif page == "🔍 Единый поиск":
             with st.spinner("Поиск в реестре..."):
                 try:
                     from scraper_kazpatent import search_trademarks
-                    if by_owner or by_bin:
+                    if by_author:
+                        # патенты по автору
+                        reg_results = search_trademarks(
+                            query="", author=query,
+                            object_type=reg_type, max_pages=10,
+                        )
+                    elif by_owner or by_bin:
                         # все объекты правообладателя из выбранного реестра
                         reg_results = search_trademarks(
                             query="", owner=owner_query,
